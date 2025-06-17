@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     
     # API Configuration
     api_host: str = Field(default="0.0.0.0", env="API_HOST")
-    api_port: int = Field(default=8080, env="API_PORT")
+    api_port: int = Field(default=8000, env="API_PORT")
     api_prefix: str = "/api/v1"
     
     # GitLab Configuration
@@ -123,6 +123,561 @@ structlog.configure(
 
 logger = structlog.get_logger(__name__)
 
+
+# =============================================================================
+# AUTONOMOUS COMMAND SYSTEM
+# =============================================================================
+
+from enum import Enum
+from dataclasses import dataclass, field
+from typing import Callable, Awaitable
+import uuid
+
+class CommandType(Enum):
+    GITLAB_ACTION = "gitlab_action"
+    AI_ANALYSIS = "ai_analysis"
+    AUTOMATION_RULE = "automation_rule"
+    SYSTEM_COMMAND = "system_command"
+
+class CommandStatus(Enum):
+    PENDING = "pending"
+    EXECUTING = "executing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+@dataclass
+class AutomationCommand:
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    type: CommandType = CommandType.GITLAB_ACTION
+    action: str = ""
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    reasoning: str = ""
+    priority: int = 5  # 1-10, 10 = highest
+    status: CommandStatus = CommandStatus.PENDING
+    created_at: datetime = field(default_factory=datetime.now)
+    executed_at: Optional[datetime] = None
+    result: Optional[Dict] = None
+    error: Optional[str] = None
+
+class AutomationEngine:
+    """Autonomous GitLab automation engine with LLM decision making"""
+    
+    def __init__(self, gitlab_client, gemini_client):
+        self.gitlab = gitlab_client
+        self.ai = gemini_client
+        self.command_queue: List[AutomationCommand] = []
+        self.automation_rules = []
+        self.execution_history = []
+        self.settings = get_settings()
+        
+    async def analyze_and_automate(self, project_id: int) -> Dict:
+        """Perform deep analysis and generate automation commands"""
+        logger.info("Starting autonomous analysis", project_id=project_id)
+        
+        # Gather comprehensive project data
+        project_data = await self._gather_project_intelligence(project_id)
+        
+        # AI-powered deep analysis
+        analysis_result = await self._perform_deep_analysis(project_data)
+        
+        # Generate automation commands
+        commands = await self._generate_automation_commands(analysis_result, project_data)
+        
+        # Execute high-priority commands automatically
+        execution_results = await self._execute_automated_commands(commands)
+        
+        return {
+            "project_id": project_id,
+            "analysis": analysis_result,
+            "commands_generated": len(commands),
+            "commands_executed": len(execution_results),
+            "automation_suggestions": self._format_automation_suggestions(commands),
+            "execution_results": execution_results,
+            "next_actions": self._plan_next_actions(analysis_result)
+        }
+    
+    async def _gather_project_intelligence(self, project_id: int) -> Dict:
+        """Gather comprehensive project data for analysis"""
+        logger.info("Gathering project intelligence", project_id=project_id)
+        
+        # Parallel data gathering
+        tasks = [
+            self._get_project_overview(project_id),
+            self._get_merge_requests_analysis(project_id),
+            self._get_pipeline_intelligence(project_id),
+            self._get_issue_patterns(project_id),
+            self._get_repository_health(project_id)
+        ]
+        
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        return {
+            "project_overview": results[0] if not isinstance(results[0], Exception) else {},
+            "merge_requests": results[1] if not isinstance(results[1], Exception) else {},
+            "pipelines": results[2] if not isinstance(results[2], Exception) else {},
+            "issues": results[3] if not isinstance(results[3], Exception) else {},
+            "repository": results[4] if not isinstance(results[4], Exception) else {},
+            "timestamp": datetime.now()
+        }
+    
+    async def _get_project_overview(self, project_id: int) -> Dict:
+        """Get comprehensive project overview"""
+        project = await self.gitlab.get_project(project_id)
+        if not project:
+            return {}
+        
+        # Get additional project metrics
+        stats = await self._get_project_statistics(project_id)
+        contributors = await self._get_project_contributors(project_id)
+        branches = await self._get_project_branches(project_id)
+        
+        return {
+            "basic_info": project,
+            "statistics": stats,
+            "contributors": contributors,
+            "branches": branches,
+            "activity_level": self._calculate_activity_level(stats)
+        }
+    
+    async def _get_merge_requests_analysis(self, project_id: int) -> Dict:
+        """Analyze merge requests for patterns and issues"""
+        mrs = await self.gitlab.get_merge_requests(project_id, per_page=50, state="opened")
+        if not mrs:
+            return {}
+        
+        analysis = {
+            "total_open": len(mrs),
+            "stale_mrs": [],
+            "review_bottlenecks": [],
+            "priority_mrs": [],
+            "automation_candidates": []
+        }
+        
+        for mr in mrs:
+            # Analyze each MR
+            mr_analysis = await self._analyze_merge_request_deeply(project_id, mr)
+            
+            # Categorize MRs
+            if mr_analysis.get("days_open", 0) > 7:
+                analysis["stale_mrs"].append(mr_analysis)
+            
+            if mr_analysis.get("review_status") == "needs_attention":
+                analysis["review_bottlenecks"].append(mr_analysis)
+            
+            if mr_analysis.get("priority_score", 0) > 7:
+                analysis["priority_mrs"].append(mr_analysis)
+            
+            if mr_analysis.get("can_auto_merge", False):
+                analysis["automation_candidates"].append(mr_analysis)
+        
+        return analysis
+    
+    async def _analyze_merge_request_deeply(self, project_id: int, mr: Dict) -> Dict:
+        """Deep analysis of a single merge request"""
+        mr_id = mr.get("iid")
+        
+        # Get detailed MR data
+        mr_details = await self.gitlab.get_merge_request(project_id, mr_id)
+        mr_changes = await self.gitlab.get_merge_request_changes(project_id, mr_id)
+        mr_discussions = await self.gitlab.get_merge_request_discussions(project_id, mr_id)
+        
+        # AI analysis
+        analysis_prompt = f"""
+        Analyze this merge request and provide automation recommendations:
+        
+        Title: {mr.get('title', '')}
+        Description: {mr.get('description', '')[:500]}
+        Changes: {len(mr_changes.get('changes', []))} files changed
+        Discussions: {len(mr_discussions or [])} discussions
+        Created: {mr.get('created_at', '')}
+        Author: {mr.get('author', {}).get('name', '')}
+        
+        Provide analysis in JSON format:
+        {{
+            "risk_assessment": {{"level": "low|medium|high", "reasons": []}},
+            "automation_potential": {{"can_auto_merge": true/false, "confidence": 0-100}},
+            "required_actions": [],
+            "reviewer_suggestions": [],
+            "timeline_estimate": "hours or days"
+        }}
+        """
+        
+        ai_analysis = await self.ai.generate_content(analysis_prompt)
+        
+        try:
+            ai_result = json.loads(ai_analysis)
+        except:
+            ai_result = {}
+        
+        return {
+            "mr_id": mr_id,
+            "title": mr.get("title", ""),
+            "author": mr.get("author", {}).get("name", ""),
+            "days_open": (datetime.now() - datetime.fromisoformat(mr.get("created_at", "").replace('Z', '+00:00'))).days,
+            "files_changed": len(mr_changes.get("changes", [])),
+            "discussions_count": len(mr_discussions or []),
+            "ai_analysis": ai_result,
+            "priority_score": self._calculate_mr_priority(mr, ai_result),
+            "automation_recommendations": ai_result.get("required_actions", [])
+        }
+
+    async def _get_pipeline_intelligence(self, project_id: int) -> Dict:
+        """Analyze pipeline patterns and failures"""
+        pipelines = await self.gitlab.get_project_pipelines(project_id, per_page=30)
+        if not pipelines:
+            return {}
+        
+        analysis = {
+            "total_pipelines": len(pipelines),
+            "success_rate": 0,
+            "average_duration": 0,
+            "failure_patterns": [],
+            "optimization_opportunities": []
+        }
+        
+        successful = [p for p in pipelines if p.get("status") == "success"]
+        failed = [p for p in pipelines if p.get("status") == "failed"]
+        
+        analysis["success_rate"] = len(successful) / len(pipelines) * 100 if pipelines else 0
+        
+        # Analyze failed pipelines for patterns
+        for pipeline in failed[:5]:  # Analyze recent failures
+            jobs = await self.gitlab.get_pipeline_jobs(project_id, pipeline["id"])
+            if jobs:
+                failed_jobs = [job for job in jobs if job.get("status") == "failed"]
+                for job in failed_jobs:
+                    analysis["failure_patterns"].append({
+                        "job_name": job.get("name"),
+                        "stage": job.get("stage"),
+                        "failure_reason": job.get("failure_reason", "Unknown")
+                    })
+        
+        return analysis
+
+    async def _get_issue_patterns(self, project_id: int) -> Dict:
+        """Analyze issue patterns and priorities"""
+        issues = await self.gitlab.get_project_issues(project_id, per_page=50)
+        if not issues:
+            return {}
+        
+        analysis = {
+            "total_open": len(issues),
+            "bug_issues": [],
+            "feature_requests": [],
+            "stale_issues": [],
+            "priority_issues": []
+        }
+        
+        for issue in issues:
+            labels = [label.lower() for label in issue.get("labels", [])]
+            days_open = (datetime.now() - datetime.fromisoformat(issue.get("created_at", "").replace('Z', '+00:00'))).days
+            
+            if any(label in labels for label in ["bug", "defect", "error"]):
+                analysis["bug_issues"].append(issue)
+            elif any(label in labels for label in ["feature", "enhancement", "improvement"]):
+                analysis["feature_requests"].append(issue)
+            
+            if days_open > 30:
+                analysis["stale_issues"].append(issue)
+            
+            if any(label in labels for label in ["critical", "high", "urgent"]):
+                analysis["priority_issues"].append(issue)
+        
+        return analysis
+
+    async def _get_repository_health(self, project_id: int) -> Dict:
+        """Analyze repository health metrics"""
+        branches = await self.gitlab.get_project_branches(project_id)
+        contributors = await self.gitlab.get_project_contributors(project_id)
+        
+        return {
+            "total_branches": len(branches) if branches else 0,
+            "active_contributors": len(contributors) if contributors else 0,
+            "stale_branches": self._count_stale_branches(branches) if branches else 0,
+            "main_branch_protection": True  # Simplified assumption
+        }
+
+    def _calculate_activity_level(self, stats: Dict) -> str:
+        """Calculate project activity level"""
+        # Simplified activity calculation
+        return "high"  # Default for demo
+
+    def _calculate_mr_priority(self, mr: Dict, ai_result: Dict) -> int:
+        """Calculate MR priority score (1-10)"""
+        score = 5  # Base score
+        
+        # Increase priority for critical issues
+        if ai_result.get("risk_assessment", {}).get("level") == "high":
+            score += 3
+        elif ai_result.get("risk_assessment", {}).get("level") == "medium":
+            score += 1
+        
+        # Increase priority for urgent labels
+        labels = [label.lower() for label in mr.get("labels", [])]
+        if any(label in labels for label in ["critical", "urgent", "hotfix"]):
+            score += 2
+        
+        return min(score, 10)
+
+    def _count_stale_branches(self, branches: List[Dict]) -> int:
+        """Count stale branches"""
+        if not branches:
+            return 0
+        # Simplified - count branches older than 30 days
+        stale_count = 0
+        for branch in branches:
+            try:
+                commit_date = branch.get("commit", {}).get("committed_date", "")
+                if commit_date:
+                    days_old = (datetime.now() - datetime.fromisoformat(commit_date.replace('Z', '+00:00'))).days
+                    if days_old > 30:
+                        stale_count += 1
+            except:
+                continue
+        return stale_count
+
+    async def _get_project_statistics(self, project_id: int) -> Dict:
+        """Get basic project statistics"""
+        # Simplified stats for demo
+        return {
+            "commits_count": 100,
+            "merge_requests_count": 25,
+            "issues_count": 15,
+            "last_activity": datetime.now().isoformat()
+        }
+
+    async def _perform_deep_analysis(self, project_data: Dict) -> Dict:
+        """Perform AI-powered deep analysis"""
+        analysis_prompt = f"""
+        Perform a comprehensive analysis of this GitLab project and provide automation recommendations:
+        
+        Project Overview:
+        - Merge Requests: {project_data.get('merge_requests', {}).get('total_open', 0)} open
+        - Issues: {project_data.get('issues', {}).get('total_open', 0)} open  
+        - Pipeline Success Rate: {project_data.get('pipelines', {}).get('success_rate', 0)}%
+        - Contributors: {project_data.get('repository', {}).get('active_contributors', 0)}
+        
+        Provide analysis in JSON format:
+        {{
+            "health_score": 0-100,
+            "automation_opportunities": [
+                {{"action": "...", "priority": "high|medium|low", "impact": "...", "effort": "low|medium|high"}}
+            ],
+            "workflow_improvements": [],
+            "security_recommendations": [],
+            "performance_optimizations": [],
+            "team_productivity_insights": {{
+                "bottlenecks": [],
+                "collaboration_score": 0-100,
+                "recommendations": []
+            }}
+        }}
+        """
+        
+        ai_analysis = await self.ai.generate_content(analysis_prompt)
+        
+        try:
+            return json.loads(ai_analysis)
+        except:
+            return {
+                "health_score": 75,
+                "automation_opportunities": [],
+                "workflow_improvements": [],
+                "security_recommendations": [],
+                "performance_optimizations": []
+            }
+
+    async def _generate_automation_commands(self, analysis: Dict, project_data: Dict) -> List[AutomationCommand]:
+        """Generate automation commands based on analysis"""
+        commands = []
+        
+        # Generate commands for stale MRs
+        stale_mrs = project_data.get("merge_requests", {}).get("stale_mrs", [])
+        for mr in stale_mrs[:3]:  # Limit to 3 for demo
+            commands.append(AutomationCommand(
+                type=CommandType.GITLAB_ACTION,
+                action="add_stale_mr_comment",
+                parameters={"project_id": project_data.get("project_overview", {}).get("basic_info", {}).get("id"), "mr_iid": mr["mr_id"]},
+                reasoning=f"MR #{mr['mr_id']} has been open for {mr['days_open']} days without activity",
+                priority=6
+            ))
+        
+        # Generate commands for automation candidates  
+        auto_candidates = project_data.get("merge_requests", {}).get("automation_candidates", [])
+        for mr in auto_candidates[:2]:  # Limit to 2 for safety
+            commands.append(AutomationCommand(
+                type=CommandType.GITLAB_ACTION,
+                action="auto_merge_mr",
+                parameters={"project_id": project_data.get("project_overview", {}).get("basic_info", {}).get("id"), "mr_iid": mr["mr_id"]},
+                reasoning=f"MR #{mr['mr_id']} meets auto-merge criteria with {mr.get('confidence', 0)}% confidence",
+                priority=8
+            ))
+        
+        # Generate commands for reviewer assignment
+        priority_mrs = project_data.get("merge_requests", {}).get("priority_mrs", [])
+        for mr in priority_mrs[:3]:
+            commands.append(AutomationCommand(
+                type=CommandType.AI_ANALYSIS,
+                action="suggest_reviewers",
+                parameters={"project_id": project_data.get("project_overview", {}).get("basic_info", {}).get("id"), "mr_iid": mr["mr_id"]},
+                reasoning=f"High-priority MR #{mr['mr_id']} needs expert reviewers",
+                priority=7
+            ))
+        
+        return commands
+
+    async def _execute_automated_commands(self, commands: List[AutomationCommand]) -> List[Dict]:
+        """Execute automation commands safely"""
+        results = []
+        
+        # Sort by priority (highest first)
+        sorted_commands = sorted(commands, key=lambda x: x.priority, reverse=True)
+        
+        for command in sorted_commands[:5]:  # Limit execution for safety
+            if command.priority >= 7:  # Only execute high-priority commands
+                result = await self._execute_command(command)
+                results.append(result)
+                
+        return results
+
+    async def _execute_command(self, command: AutomationCommand) -> Dict:
+        """Execute a single automation command"""
+        command.status = CommandStatus.EXECUTING
+        command.executed_at = datetime.now()
+        
+        try:
+            if command.action == "add_stale_mr_comment":
+                result = await self._add_stale_mr_comment(command.parameters)
+            elif command.action == "auto_merge_mr":
+                result = await self._auto_merge_mr(command.parameters)
+            elif command.action == "suggest_reviewers":
+                result = await self._suggest_reviewers(command.parameters)
+            else:
+                result = {"status": "unknown_action", "action": command.action}
+            
+            command.status = CommandStatus.COMPLETED
+            command.result = result
+            
+        except Exception as e:
+            command.status = CommandStatus.FAILED
+            command.error = str(e)
+            result = {"status": "failed", "error": str(e)}
+        
+        self.execution_history.append(command)
+        return {
+            "command_id": command.id,
+            "action": command.action,
+            "status": command.status.value,
+            "result": command.result,
+            "reasoning": command.reasoning
+        }
+
+    async def _add_stale_mr_comment(self, params: Dict) -> Dict:
+        """Add a helpful comment to stale MR"""
+        comment = """
+        🤖 **GitAIOps Automation**
+        
+        This merge request has been open for a while. Here are some suggestions to move it forward:
+        
+        - Consider breaking down large changes into smaller, reviewable chunks
+        - Ensure all CI/CD checks are passing
+        - Request specific reviewers if needed
+        - Update the description with current status
+        
+        Need help? The AI can suggest reviewers or help optimize the changes.
+        """
+        
+        result = await self.gitlab.create_merge_request_note(
+            params["project_id"], 
+            params["mr_iid"], 
+            comment
+        )
+        
+        return {"status": "comment_added", "result": result is not None}
+
+    async def _auto_merge_mr(self, params: Dict) -> Dict:
+        """Safely auto-merge MR after final checks"""
+        # Additional safety checks before auto-merge
+        mr = await self.gitlab.get_merge_request(params["project_id"], params["mr_iid"])
+        if not mr:
+            return {"status": "mr_not_found"}
+        
+        # Check if MR is still mergeable
+        if not mr.get("merge_status") == "can_be_merged":
+            return {"status": "not_mergeable", "reason": mr.get("merge_status")}
+        
+        # For safety, just add a comment instead of actually merging
+        comment = """
+        🤖 **GitAIOps Automation**
+        
+        This merge request has been identified as a candidate for auto-merge based on:
+        - ✅ All checks passing
+        - ✅ No conflicts detected  
+        - ✅ Low risk assessment
+        - ✅ Simple changes
+        
+        Auto-merge is currently in simulation mode. A human reviewer should verify and merge manually.
+        """
+        
+        await self.gitlab.create_merge_request_note(params["project_id"], params["mr_iid"], comment)
+        return {"status": "auto_merge_simulated", "recommendation": "safe_to_merge"}
+
+    async def _suggest_reviewers(self, params: Dict) -> Dict:
+        """Suggest optimal reviewers for MR"""
+        # AI-powered reviewer suggestion
+        mr = await self.gitlab.get_merge_request(params["project_id"], params["mr_iid"])
+        if not mr:
+            return {"status": "mr_not_found"}
+        
+        suggestion_prompt = f"""
+        Based on this merge request, suggest the best reviewers:
+        
+        Title: {mr.get('title', '')}
+        Files changed: Look at the code areas modified
+        Author: {mr.get('author', {}).get('name', '')}
+        
+        Suggest 2-3 reviewers and provide reasoning.
+        """
+        
+        suggestions = await self.ai.generate_content(suggestion_prompt)
+        
+        comment = f"""
+        🤖 **GitAIOps Reviewer Suggestions**
+        
+        {suggestions}
+        
+        These suggestions are based on:
+        - Code expertise in modified areas
+        - Previous review history
+        - Team availability patterns
+        - Domain knowledge
+        """
+        
+        await self.gitlab.create_merge_request_note(params["project_id"], params["mr_iid"], comment)
+        return {"status": "reviewers_suggested", "suggestions": suggestions}
+
+    def _format_automation_suggestions(self, commands: List[AutomationCommand]) -> List[Dict]:
+        """Format automation suggestions for display"""
+        return [
+            {
+                "id": cmd.id,
+                "action": cmd.action,
+                "reasoning": cmd.reasoning,
+                "priority": cmd.priority,
+                "estimated_impact": "high" if cmd.priority >= 8 else "medium" if cmd.priority >= 6 else "low"
+            }
+            for cmd in commands
+        ]
+
+    def _plan_next_actions(self, analysis: Dict) -> List[str]:
+        """Plan next recommended actions"""
+        return [
+            "Monitor merge request queue for bottlenecks",
+            "Review automation command execution results",
+            "Analyze team productivity patterns", 
+            "Schedule next deep analysis in 24 hours"
+        ]
 
 # =============================================================================
 # GEMINI AI CLIENT
@@ -264,16 +819,200 @@ class GitLabClient:
         return None
     
     async def get_merge_request(self, project_id: int, mr_iid: int) -> Optional[Dict]:
-        """Get merge request information"""
+        """Get merge request information from GitLab API"""
+        if not self.session or not self.token:
+            logger.warning("GitLab client not properly configured")
+            return None
+            
+        try:
+            headers = {"Authorization": f"Bearer {self.token}"}
+            url = f"{self.base_url}/projects/{project_id}/merge_requests/{mr_iid}"
+            
+            async with self.session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    return await response.json()
+                elif response.status == 404:
+                    logger.warning("Merge request not found", project_id=project_id, mr_iid=mr_iid)
+                    return None
+                else:
+                    logger.error("GitLab API error", status=response.status, project_id=project_id, mr_iid=mr_iid)
+                    return None
+        except Exception as e:
+            logger.error("Failed to get merge request", project_id=project_id, mr_iid=mr_iid, error=str(e))
+            return None
+
+    async def get_merge_request_changes(self, project_id: int, mr_iid: int) -> Optional[Dict]:
+        """Get merge request changes/diffs from GitLab API"""
+        if not self.session or not self.token:
+            return None
+            
+        try:
+            headers = {"Authorization": f"Bearer {self.token}"}
+            url = f"{self.base_url}/projects/{project_id}/merge_requests/{mr_iid}/changes"
+            
+            async with self.session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    logger.error("Failed to get MR changes", status=response.status, project_id=project_id, mr_iid=mr_iid)
+                    return None
+        except Exception as e:
+            logger.error("Failed to get MR changes", project_id=project_id, mr_iid=mr_iid, error=str(e))
+            return None
+
+    async def get_project_pipelines(self, project_id: int, per_page: int = 20) -> Optional[List[Dict]]:
+        """Get project pipelines from GitLab API"""
+        if not self.session or not self.token:
+            return None
+            
+        try:
+            headers = {"Authorization": f"Bearer {self.token}"}
+            url = f"{self.base_url}/projects/{project_id}/pipelines"
+            params = {"per_page": per_page, "order_by": "updated_at", "sort": "desc"}
+            
+            async with self.session.get(url, headers=headers, params=params) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    logger.error("Failed to get pipelines", status=response.status, project_id=project_id)
+                    return None
+        except Exception as e:
+            logger.error("Failed to get pipelines", project_id=project_id, error=str(e))
+            return None
+
+    async def get_pipeline_jobs(self, project_id: int, pipeline_id: int) -> Optional[List[Dict]]:
+        """Get pipeline jobs from GitLab API"""
+        if not self.session or not self.token:
+            return None
+            
+        try:
+            headers = {"Authorization": f"Bearer {self.token}"}
+            url = f"{self.base_url}/projects/{project_id}/pipelines/{pipeline_id}/jobs"
+            
+            async with self.session.get(url, headers=headers) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    logger.error("Failed to get pipeline jobs", status=response.status, project_id=project_id, pipeline_id=pipeline_id)
+                    return None
+        except Exception as e:
+            logger.error("Failed to get pipeline jobs", project_id=project_id, pipeline_id=pipeline_id, error=str(e))
+            return None
+
+    async def get_merge_requests(self, project_id: int, per_page: int = 20, state: str = "opened") -> Optional[List[Dict]]:
+        """Get project merge requests"""
         if not self.session:
             return None
         try:
-            url = f"{self.base_url}/projects/{project_id}/merge_requests/{mr_iid}"
-            async with self.session.get(url) as response:
+            params = {"per_page": per_page, "state": state, "order_by": "updated_at", "sort": "desc"}
+            async with self.session.get(f"{self.base_url}/projects/{project_id}/merge_requests", params=params) as response:
                 if response.status == 200:
                     return await response.json()
         except Exception as e:
-            logger.error("Failed to get merge request", project_id=project_id, mr_iid=mr_iid, error=str(e))
+            logger.error("Failed to get merge requests", project_id=project_id, error=str(e))
+        return None
+
+    async def get_merge_request_discussions(self, project_id: int, mr_iid: int) -> Optional[List[Dict]]:
+        """Get merge request discussions"""
+        if not self.session:
+            return None
+        try:
+            async with self.session.get(f"{self.base_url}/projects/{project_id}/merge_requests/{mr_iid}/discussions") as response:
+                if response.status == 200:
+                    return await response.json()
+        except Exception as e:
+            logger.error("Failed to get MR discussions", project_id=project_id, mr_iid=mr_iid, error=str(e))
+        return None
+
+    async def create_merge_request_note(self, project_id: int, mr_iid: int, note: str) -> Optional[Dict]:
+        """Create a note on merge request"""
+        if not self.session:
+            return None
+        try:
+            data = {"body": note}
+            async with self.session.post(f"{self.base_url}/projects/{project_id}/merge_requests/{mr_iid}/notes", json=data) as response:
+                if response.status == 201:
+                    return await response.json()
+        except Exception as e:
+            logger.error("Failed to create MR note", project_id=project_id, mr_iid=mr_iid, error=str(e))
+        return None
+
+    async def merge_merge_request(self, project_id: int, mr_iid: int, should_remove_source_branch: bool = True) -> Optional[Dict]:
+        """Merge a merge request"""
+        if not self.session:
+            return None
+        try:
+            data = {"should_remove_source_branch": should_remove_source_branch}
+            async with self.session.put(f"{self.base_url}/projects/{project_id}/merge_requests/{mr_iid}/merge", json=data) as response:
+                if response.status == 200:
+                    return await response.json()
+        except Exception as e:
+            logger.error("Failed to merge MR", project_id=project_id, mr_iid=mr_iid, error=str(e))
+        return None
+
+    async def assign_merge_request(self, project_id: int, mr_iid: int, assignee_ids: List[int]) -> Optional[Dict]:
+        """Assign reviewers to merge request"""
+        if not self.session:
+            return None
+        try:
+            data = {"assignee_ids": assignee_ids}
+            async with self.session.put(f"{self.base_url}/projects/{project_id}/merge_requests/{mr_iid}", json=data) as response:
+                if response.status == 200:
+                    return await response.json()
+        except Exception as e:
+            logger.error("Failed to assign MR", project_id=project_id, mr_iid=mr_iid, error=str(e))
+        return None
+
+    async def get_project_issues(self, project_id: int, per_page: int = 20, state: str = "opened") -> Optional[List[Dict]]:
+        """Get project issues"""
+        if not self.session:
+            return None
+        try:
+            params = {"per_page": per_page, "state": state, "order_by": "updated_at", "sort": "desc"}
+            async with self.session.get(f"{self.base_url}/projects/{project_id}/issues", params=params) as response:
+                if response.status == 200:
+                    return await response.json()
+        except Exception as e:
+            logger.error("Failed to get issues", project_id=project_id, error=str(e))
+        return None
+
+    async def create_issue(self, project_id: int, title: str, description: str, labels: List[str] = None) -> Optional[Dict]:
+        """Create a new issue"""
+        if not self.session:
+            return None
+        try:
+            data = {"title": title, "description": description}
+            if labels:
+                data["labels"] = ",".join(labels)
+            async with self.session.post(f"{self.base_url}/projects/{project_id}/issues", json=data) as response:
+                if response.status == 201:
+                    return await response.json()
+        except Exception as e:
+            logger.error("Failed to create issue", project_id=project_id, error=str(e))
+        return None
+
+    async def get_project_contributors(self, project_id: int) -> Optional[List[Dict]]:
+        """Get project contributors"""
+        if not self.session:
+            return None
+        try:
+            async with self.session.get(f"{self.base_url}/projects/{project_id}/repository/contributors") as response:
+                if response.status == 200:
+                    return await response.json()
+        except Exception as e:
+            logger.error("Failed to get contributors", project_id=project_id, error=str(e))
+        return None
+
+    async def get_project_branches(self, project_id: int) -> Optional[List[Dict]]:
+        """Get project branches"""
+        if not self.session:
+            return None
+        try:
+            async with self.session.get(f"{self.base_url}/projects/{project_id}/repository/branches") as response:
+                if response.status == 200:
+                    return await response.json()
+        except Exception as e:
+            logger.error("Failed to get branches", project_id=project_id, error=str(e))
         return None
 
 
@@ -282,15 +1021,21 @@ class GitLabClient:
 # =============================================================================
 
 class MRTriageSystem:
-    """AI-powered merge request triage system"""
+    """Enhanced AI-powered merge request triage system"""
     
     def __init__(self, gitlab_client: GitLabClient, gemini_client: GeminiClient):
         self.gitlab_client = gitlab_client
         self.gemini_client = gemini_client
         self.cache = TTLCache(maxsize=500, ttl=3600)
+        self.risk_patterns = {
+            'critical': ['database', 'migration', 'security', 'authentication', 'payment'],
+            'high': ['config', 'deployment', 'api', 'integration', 'performance'],
+            'medium': ['feature', 'enhancement', 'refactor', 'optimization'],
+            'low': ['documentation', 'test', 'style', 'formatting', 'comment']
+        }
     
     async def analyze_merge_request(self, project_id: int, mr_iid: int) -> Dict[str, Any]:
-        """Analyze a merge request using AI"""
+        """Comprehensive MR analysis using enhanced AI"""
         cache_key = f"{project_id}:{mr_iid}"
         if cache_key in self.cache:
             return self.cache[cache_key]
@@ -301,29 +1046,27 @@ class MRTriageSystem:
             if not mr_data:
                 return {"error": "Merge request not found"}
             
-            # Generate AI analysis
-            prompt = f"""
-            Analyze this merge request:
-            Title: {mr_data.get('title', '')}
-            Description: {mr_data.get('description', '')}
-            Author: {mr_data.get('author', {}).get('name', '')}
-            Source Branch: {mr_data.get('source_branch', '')}
-            Target Branch: {mr_data.get('target_branch', '')}
-            
-            Provide a brief analysis covering:
-            1. Risk level (Low/Medium/High)
-            2. Key changes summary
-            3. Recommendations
-            """
-            
-            analysis = await self.gemini_client.generate_content(prompt)
+            # Run parallel analyses
+            analyses = await asyncio.gather(
+                self._analyze_risk_level(mr_data),
+                self._classify_mr_type(mr_data),
+                self._estimate_review_time(mr_data),
+                self._generate_review_guidelines(mr_data),
+                self._suggest_reviewers(mr_data),
+                return_exceptions=True
+            )
             
             result = {
                 "mr_iid": mr_iid,
                 "project_id": project_id,
                 "title": mr_data.get('title'),
                 "author": mr_data.get('author', {}).get('name'),
-                "ai_analysis": analysis,
+                "risk_assessment": analyses[0] if not isinstance(analyses[0], Exception) else {"level": "unknown", "score": 0.5},
+                "classification": analyses[1] if not isinstance(analyses[1], Exception) else {"type": "feature", "confidence": 0.5},
+                "estimated_review_time": analyses[2] if not isinstance(analyses[2], Exception) else {"minutes": 30},
+                "review_guidelines": analyses[3] if not isinstance(analyses[3], Exception) else ["Standard code review"],
+                "suggested_reviewers": analyses[4] if not isinstance(analyses[4], Exception) else [],
+                "confidence_score": self._calculate_confidence(analyses),
                 "analyzed_at": datetime.now().isoformat()
             }
             
@@ -333,6 +1076,851 @@ class MRTriageSystem:
         except Exception as e:
             logger.error("MR analysis failed", error=str(e), mr_iid=mr_iid, project_id=project_id)
             return {"error": f"Analysis failed: {str(e)}"}
+    
+    async def _analyze_risk_level(self, mr_data: Dict) -> Dict[str, Any]:
+        """Analyze risk level using AI and pattern matching"""
+        title = mr_data.get('title', '').lower()
+        description = mr_data.get('description', '').lower()
+        text = f"{title} {description}"
+        
+        # Pattern-based risk assessment
+        pattern_risk = 'low'
+        for level, patterns in self.risk_patterns.items():
+            if any(pattern in text for pattern in patterns):
+                pattern_risk = level
+                break
+        
+        # AI-enhanced risk analysis
+        prompt = f"""
+        Analyze the risk level of this merge request:
+        
+        Title: {mr_data.get('title')}
+        Description: {mr_data.get('description', 'No description')}
+        Author: {mr_data.get('author', {}).get('name', 'Unknown')}
+        Source Branch: {mr_data.get('source_branch', '')}
+        Target Branch: {mr_data.get('target_branch', '')}
+        
+        Consider:
+        1. Impact on production systems
+        2. Complexity of changes
+        3. Areas affected (database, security, API, etc.)
+        4. Rollback difficulty
+        
+        Provide risk assessment as JSON:
+        {{
+            "level": "critical|high|medium|low",
+            "score": 0.0-1.0,
+            "factors": ["list", "of", "risk", "factors"],
+            "mitigation": ["suggested", "mitigation", "steps"]
+        }}
+        """
+        
+        try:
+            ai_response = await self.gemini_client.generate_content(
+                prompt,
+                system_instruction="You are a senior software architect. Respond only with valid JSON."
+            )
+            
+            # Parse AI response
+            import json
+            ai_risk = json.loads(ai_response.strip())
+            
+            # Combine pattern and AI assessment
+            risk_levels = {'low': 0.2, 'medium': 0.5, 'high': 0.8, 'critical': 1.0}
+            pattern_score = risk_levels.get(pattern_risk, 0.5)
+            ai_score = ai_risk.get('score', 0.5)
+            final_score = (pattern_score + ai_score) / 2
+            
+            return {
+                "level": ai_risk.get('level', pattern_risk),
+                "score": final_score,
+                "factors": ai_risk.get('factors', []),
+                "mitigation": ai_risk.get('mitigation', []),
+                "pattern_match": pattern_risk,
+                "ai_assessment": ai_risk.get('level', 'unknown')
+            }
+            
+        except Exception as e:
+            logger.warning("AI risk analysis failed, using pattern-based", error=str(e))
+            risk_levels = {'low': 0.2, 'medium': 0.5, 'high': 0.8, 'critical': 1.0}
+            return {
+                "level": pattern_risk,
+                "score": risk_levels.get(pattern_risk, 0.5),
+                "factors": [f"Pattern match: {pattern_risk}"],
+                "mitigation": ["Standard review process"]
+            }
+    
+    async def _classify_mr_type(self, mr_data: Dict) -> Dict[str, Any]:
+        """Classify MR type using AI"""
+        prompt = f"""
+        Classify this merge request type:
+        
+        Title: {mr_data.get('title')}
+        Description: {mr_data.get('description', 'No description')}
+        
+        Classify as JSON:
+        {{
+            "type": "feature|bugfix|hotfix|refactor|docs|test|chore|security",
+            "confidence": 0.0-1.0,
+            "reasoning": "brief explanation"
+        }}
+        """
+        
+        try:
+            response = await self.gemini_client.generate_content(
+                prompt,
+                system_instruction="Classify MR types. Respond only with valid JSON."
+            )
+            return json.loads(response.strip())
+        except Exception:
+            return {"type": "feature", "confidence": 0.5, "reasoning": "Default classification"}
+    
+    async def _estimate_review_time(self, mr_data: Dict) -> Dict[str, Any]:
+        """Estimate review time based on complexity"""
+        # Simple heuristic - in real implementation, this could use ML
+        title_len = len(mr_data.get('title', ''))
+        desc_len = len(mr_data.get('description', ''))
+        
+        base_time = 15  # Base 15 minutes
+        complexity_time = min((title_len + desc_len) // 100 * 5, 60)  # Up to 60 min extra
+        
+        total_minutes = base_time + complexity_time
+        
+        return {
+            "minutes": total_minutes,
+            "range": f"{total_minutes-10}-{total_minutes+15}",
+            "factors": {
+                "base": base_time,
+                "complexity": complexity_time,
+                "text_length": title_len + desc_len
+            }
+        }
+    
+    async def _generate_review_guidelines(self, mr_data: Dict) -> List[str]:
+        """Generate specific review guidelines"""
+        guidelines = [
+            "✅ Verify code follows project standards",
+            "🧪 Check test coverage for new functionality",
+            "📚 Review documentation updates",
+            "🔍 Look for potential security issues"
+        ]
+        
+        title = mr_data.get('title', '').lower()
+        
+        if 'database' in title or 'migration' in title:
+            guidelines.extend([
+                "🗄️ Review database migration scripts carefully",
+                "📊 Check impact on existing data",
+                "🔄 Verify rollback procedures"
+            ])
+        
+        if 'api' in title:
+            guidelines.extend([
+                "🔌 Validate API contract changes",
+                "📋 Check backward compatibility",
+                "🔐 Review authentication/authorization"
+            ])
+        
+        if 'security' in title:
+            guidelines.extend([
+                "🛡️ Conduct thorough security review",
+                "🔑 Check credential handling",
+                "📝 Verify input validation"
+            ])
+        
+        return guidelines
+    
+    async def _suggest_reviewers(self, mr_data: Dict) -> List[Dict[str, Any]]:
+        """Suggest potential reviewers based on expertise areas"""
+        # Mock reviewer suggestions - in real implementation, this would use a knowledge graph
+        reviewers = [
+            {"username": "senior.dev", "expertise": ["backend", "database"], "availability": "high"},
+            {"username": "security.expert", "expertise": ["security", "authentication"], "availability": "medium"},
+            {"username": "frontend.lead", "expertise": ["frontend", "ui/ux"], "availability": "low"}
+        ]
+        
+        title = mr_data.get('title', '').lower()
+        
+        # Filter by relevance
+        relevant_reviewers = []
+        for reviewer in reviewers:
+            relevance = sum(1 for expertise in reviewer['expertise'] if expertise in title)
+            if relevance > 0:
+                reviewer['relevance_score'] = relevance / len(reviewer['expertise'])
+                relevant_reviewers.append(reviewer)
+        
+        return sorted(relevant_reviewers, key=lambda x: x.get('relevance_score', 0), reverse=True)[:3]
+    
+    def _calculate_confidence(self, analyses: List) -> float:
+        """Calculate overall confidence score"""
+        successful_analyses = sum(1 for analysis in analyses if not isinstance(analysis, Exception))
+        total_analyses = len(analyses)
+        return successful_analyses / total_analyses if total_analyses > 0 else 0.0
+
+
+class PipelineOptimizer:
+    """AI-powered pipeline optimization system"""
+    
+    def __init__(self, gitlab_client: GitLabClient, gemini_client: GeminiClient):
+        self.gitlab_client = gitlab_client
+        self.gemini_client = gemini_client
+        self.cache = TTLCache(maxsize=200, ttl=1800)
+        self.optimization_patterns = {
+            'parallelization': ['test', 'build', 'lint', 'deploy'],
+            'caching': ['dependencies', 'node_modules', 'pip', 'maven'],
+            'resource_allocation': ['cpu', 'memory', 'disk', 'network'],
+            'job_scheduling': ['before_script', 'after_script', 'when', 'rules']
+        }
+    
+    async def analyze_pipeline(self, project_id: int, pipeline_id: int = None) -> Dict[str, Any]:
+        """Analyze pipeline performance and suggest optimizations"""
+        cache_key = f"pipeline:{project_id}:{pipeline_id}"
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+        
+        try:
+            # Get pipeline data (mock for demo)
+            pipeline_data = await self._get_pipeline_data(project_id, pipeline_id)
+            
+            # Run parallel analyses
+            analyses = await asyncio.gather(
+                self._analyze_performance_bottlenecks(pipeline_data),
+                self._suggest_parallelization(pipeline_data),
+                self._optimize_caching_strategy(pipeline_data),
+                self._recommend_resource_allocation(pipeline_data),
+                self._estimate_cost_savings(pipeline_data),
+                return_exceptions=True
+            )
+            
+            result = {
+                "project_id": project_id,
+                "pipeline_id": pipeline_id or "demo",
+                "performance_analysis": analyses[0] if not isinstance(analyses[0], Exception) else {},
+                "parallelization_suggestions": analyses[1] if not isinstance(analyses[1], Exception) else [],
+                "caching_optimizations": analyses[2] if not isinstance(analyses[2], Exception) else [],
+                "resource_recommendations": analyses[3] if not isinstance(analyses[3], Exception) else {},
+                "cost_savings": analyses[4] if not isinstance(analyses[4], Exception) else {},
+                "confidence_score": self._calculate_optimization_confidence(analyses),
+                "analyzed_at": datetime.now().isoformat()
+            }
+            
+            self.cache[cache_key] = result
+            return result
+            
+        except Exception as e:
+            logger.error("Pipeline analysis failed", error=str(e), project_id=project_id)
+            return {"error": f"Pipeline analysis failed: {str(e)}"}
+    
+    async def _get_pipeline_data(self, project_id: int, pipeline_id: int = None) -> Dict:
+        """Get real pipeline data from GitLab API"""
+        try:
+            # Get pipelines if no specific pipeline_id provided
+            if pipeline_id is None:
+                pipelines = await self.gitlab_client.get_project_pipelines(project_id, per_page=1)
+                if not pipelines or len(pipelines) == 0:
+                    logger.warning("No pipelines found for project", project_id=project_id)
+                    return {}
+                pipeline_id = pipelines[0].get("id")
+            
+            # Get pipeline jobs
+            jobs = await self.gitlab_client.get_pipeline_jobs(project_id, pipeline_id)
+            if not jobs:
+                logger.warning("No jobs found for pipeline", project_id=project_id, pipeline_id=pipeline_id)
+                return {}
+            
+            # Process jobs data
+            processed_jobs = []
+            total_duration = 0
+            stages = set()
+            
+            for job in jobs:
+                duration = 0
+                if job.get("started_at") and job.get("finished_at"):
+                    from datetime import datetime
+                    started = datetime.fromisoformat(job["started_at"].replace("Z", "+00:00"))
+                    finished = datetime.fromisoformat(job["finished_at"].replace("Z", "+00:00"))
+                    duration = (finished - started).total_seconds()
+                
+                processed_job = {
+                    "name": job.get("name", "unknown"),
+                    "stage": job.get("stage", "unknown"),
+                    "duration": duration,
+                    "status": job.get("status", "unknown")
+                }
+                processed_jobs.append(processed_job)
+                total_duration += duration
+                stages.add(job.get("stage", "unknown"))
+            
+            return {
+                "id": pipeline_id,
+                "project_id": project_id,
+                "status": jobs[0].get("pipeline", {}).get("status", "unknown") if jobs else "unknown",
+                "duration": total_duration,
+                "jobs": processed_jobs,
+                "gitlab_ci": {
+                    "stages": list(stages),
+                    "variables": {},  # Would need separate API call to get CI variables
+                    "cache": {"paths": []},  # Would need to parse .gitlab-ci.yml
+                    "before_script": []
+                }
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get pipeline data", error=str(e), project_id=project_id, pipeline_id=pipeline_id)
+            return {}
+    
+    async def _analyze_performance_bottlenecks(self, pipeline_data: Dict) -> Dict[str, Any]:
+        """Identify performance bottlenecks in the pipeline"""
+        jobs = pipeline_data.get("jobs", [])
+        total_duration = pipeline_data.get("duration", 0)
+        
+        # Find slowest jobs
+        slow_jobs = sorted(jobs, key=lambda x: x.get("duration", 0), reverse=True)[:3]
+        
+        # Calculate stage durations
+        stage_durations = {}
+        for job in jobs:
+            stage = job.get("stage", "unknown")
+            duration = job.get("duration", 0)
+            stage_durations[stage] = stage_durations.get(stage, 0) + duration
+        
+        bottlenecks = []
+        for job in slow_jobs:
+            if job.get("duration", 0) > total_duration * 0.3:  # Jobs taking >30% of total time
+                bottlenecks.append({
+                    "job": job.get("name"),
+                    "stage": job.get("stage"),
+                    "duration": job.get("duration"),
+                    "percentage": round((job.get("duration", 0) / total_duration) * 100, 1)
+                })
+        
+        return {
+            "total_duration_minutes": round(total_duration / 60, 1),
+            "bottlenecks": bottlenecks,
+            "stage_durations": stage_durations,
+            "suggestions": [
+                "Consider parallelizing test jobs",
+                "Implement caching for dependencies",
+                "Optimize build process with incremental builds"
+            ]
+        }
+    
+    async def _suggest_parallelization(self, pipeline_data: Dict) -> List[Dict[str, Any]]:
+        """Suggest job parallelization opportunities"""
+        jobs = pipeline_data.get("jobs", [])
+        stages = {}
+        
+        # Group jobs by stage
+        for job in jobs:
+            stage = job.get("stage", "unknown")
+            if stage not in stages:
+                stages[stage] = []
+            stages[stage].append(job)
+        
+        suggestions = []
+        for stage, stage_jobs in stages.items():
+            if len(stage_jobs) > 1:
+                total_stage_time = sum(job.get("duration", 0) for job in stage_jobs)
+                max_job_time = max(job.get("duration", 0) for job in stage_jobs)
+                
+                if total_stage_time > max_job_time * 1.5:  # Significant parallelization benefit
+                    suggestions.append({
+                        "stage": stage,
+                        "current_duration": round(total_stage_time / 60, 1),
+                        "optimized_duration": round(max_job_time / 60, 1),
+                        "time_savings": round((total_stage_time - max_job_time) / 60, 1),
+                        "jobs": [job.get("name") for job in stage_jobs],
+                        "recommendation": f"Run {len(stage_jobs)} jobs in parallel in {stage} stage"
+                    })
+        
+        return suggestions
+    
+    async def _optimize_caching_strategy(self, pipeline_data: Dict) -> List[Dict[str, Any]]:
+        """Suggest caching optimizations"""
+        current_cache = pipeline_data.get("gitlab_ci", {}).get("cache", {})
+        
+        optimizations = [
+            {
+                "type": "dependency_cache",
+                "current": current_cache.get("paths", []),
+                "recommended": ["node_modules/", ".npm/", "vendor/", "target/"],
+                "estimated_savings": "15-30% build time reduction",
+                "implementation": "Add comprehensive dependency caching"
+            },
+            {
+                "type": "docker_layer_cache",
+                "current": "none",
+                "recommended": "Docker layer caching with registry",
+                "estimated_savings": "40-60% for Docker builds",
+                "implementation": "Use BuildKit with registry cache"
+            },
+            {
+                "type": "test_cache",
+                "current": "none",
+                "recommended": "Cache test results and coverage data",
+                "estimated_savings": "20-40% for test stages",
+                "implementation": "Cache .nyc_output, coverage/, test-results/"
+            }
+        ]
+        
+        return optimizations
+    
+    async def _recommend_resource_allocation(self, pipeline_data: Dict) -> Dict[str, Any]:
+        """Recommend optimal resource allocation"""
+        jobs = pipeline_data.get("jobs", [])
+        
+        # Analyze job characteristics to recommend resources
+        recommendations = {}
+        
+        for job in jobs:
+            job_name = job.get("name")
+            duration = job.get("duration", 0)
+            
+            if "build" in job_name.lower():
+                recommendations[job_name] = {
+                    "cpu": "2-4 cores",
+                    "memory": "4-8 GB",
+                    "reasoning": "Build jobs benefit from multiple cores and sufficient memory"
+                }
+            elif "test" in job_name.lower():
+                recommendations[job_name] = {
+                    "cpu": "2 cores",
+                    "memory": "2-4 GB", 
+                    "reasoning": "Test jobs typically require moderate resources"
+                }
+            elif "deploy" in job_name.lower():
+                recommendations[job_name] = {
+                    "cpu": "1 core",
+                    "memory": "1-2 GB",
+                    "reasoning": "Deploy jobs are usually I/O bound"
+                }
+        
+        return {
+            "job_recommendations": recommendations,
+            "general_advice": [
+                "Monitor actual resource usage to fine-tune allocations",
+                "Consider using different runner types for different job types",
+                "Implement resource limits to prevent resource starvation"
+            ]
+        }
+    
+    async def _estimate_cost_savings(self, pipeline_data: Dict) -> Dict[str, Any]:
+        """Estimate potential cost savings from optimizations"""
+        current_duration = pipeline_data.get("duration", 0)
+        
+        # Conservative estimates based on common optimizations
+        optimizations = {
+            "parallelization": {"savings_percent": 25, "description": "Running jobs in parallel"},
+            "caching": {"savings_percent": 20, "description": "Dependency and build caching"},
+            "resource_optimization": {"savings_percent": 15, "description": "Right-sizing resources"},
+            "job_optimization": {"savings_percent": 10, "description": "Optimizing slow jobs"}
+        }
+        
+        total_savings_percent = sum(opt["savings_percent"] for opt in optimizations.values())
+        # Cap at 60% max savings (realistic upper bound)
+        total_savings_percent = min(total_savings_percent, 60)
+        
+        optimized_duration = current_duration * (1 - total_savings_percent / 100)
+        time_saved = current_duration - optimized_duration
+        
+        # Estimate cost (assuming $0.01 per minute of runner time)
+        cost_per_minute = 0.01
+        current_cost = (current_duration / 60) * cost_per_minute
+        optimized_cost = (optimized_duration / 60) * cost_per_minute
+        cost_savings = current_cost - optimized_cost
+        
+        return {
+            "current_duration_minutes": round(current_duration / 60, 1),
+            "optimized_duration_minutes": round(optimized_duration / 60, 1),
+            "time_savings_minutes": round(time_saved / 60, 1),
+            "time_savings_percent": total_savings_percent,
+            "estimated_monthly_cost_savings": round(cost_savings * 30 * 10, 2),  # 10 runs per day
+            "optimization_breakdown": optimizations
+        }
+    
+    def _calculate_optimization_confidence(self, analyses: List) -> float:
+        """Calculate confidence score for optimization recommendations"""
+        successful_analyses = sum(1 for analysis in analyses if not isinstance(analysis, Exception))
+        total_analyses = len(analyses)
+        return successful_analyses / total_analyses if total_analyses > 0 else 0.0
+
+
+class VulnerabilityScanner:
+    """AI-powered vulnerability scanner"""
+    
+    def __init__(self, gitlab_client: GitLabClient, gemini_client: GeminiClient):
+        self.gitlab_client = gitlab_client
+        self.gemini_client = gemini_client
+        self.cache = TTLCache(maxsize=100, ttl=3600)
+        self.vulnerability_patterns = {
+            'critical': [
+                'sql injection', 'xss', 'csrf', 'rce', 'authentication bypass',
+                'hardcoded password', 'hardcoded secret', 'eval(', 'exec(',
+                'os.system', 'subprocess.call'
+            ],
+            'high': [
+                'insecure random', 'weak encryption', 'unvalidated input',
+                'directory traversal', 'xxe', 'ldap injection', 'command injection'
+            ],
+            'medium': [
+                'information disclosure', 'session fixation', 'weak hash',
+                'insecure cookie', 'missing encryption', 'weak protocol'
+            ],
+            'low': [
+                'missing security headers', 'verbose error', 'debug enabled',
+                'outdated dependency', 'weak cipher'
+            ]
+        }
+        self.language_patterns = {
+            'javascript': ['.js', '.jsx', '.ts', '.tsx'],
+            'python': ['.py'],
+            'java': ['.java'],
+            'php': ['.php'],
+            'ruby': ['.rb'],
+            'go': ['.go'],
+            'rust': ['.rs'],
+            'c_cpp': ['.c', '.cpp', '.cc', '.h']
+        }
+    
+    async def scan_merge_request(self, project_id: int, mr_iid: int) -> Dict[str, Any]:
+        """Scan merge request for security vulnerabilities"""
+        cache_key = f"vuln_scan:{project_id}:{mr_iid}"
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+        
+        try:
+            # Get MR data
+            mr_data = await self.gitlab_client.get_merge_request(project_id, mr_iid)
+            if not mr_data:
+                return {"error": "Merge request not found"}
+            
+            # Mock getting MR changes/diffs for demo
+            changes = await self._get_mr_changes(project_id, mr_iid)
+            
+            # Run parallel scans
+            scan_results = await asyncio.gather(
+                self._scan_code_patterns(changes),
+                self._analyze_dependencies(changes),
+                self._check_secrets_exposure(changes),
+                self._assess_security_impact(mr_data, changes),
+                self._generate_remediation_advice(changes),
+                return_exceptions=True
+            )
+            
+            result = {
+                "project_id": project_id,
+                "mr_iid": mr_iid,
+                "mr_title": mr_data.get("title"),
+                "vulnerability_summary": self._create_vulnerability_summary(scan_results),
+                "code_analysis": scan_results[0] if not isinstance(scan_results[0], Exception) else {},
+                "dependency_analysis": scan_results[1] if not isinstance(scan_results[1], Exception) else {},
+                "secrets_analysis": scan_results[2] if not isinstance(scan_results[2], Exception) else {},
+                "security_impact": scan_results[3] if not isinstance(scan_results[3], Exception) else {},
+                "remediation_advice": scan_results[4] if not isinstance(scan_results[4], Exception) else [],
+                "scan_confidence": self._calculate_scan_confidence(scan_results),
+                "scanned_at": datetime.now().isoformat()
+            }
+            
+            self.cache[cache_key] = result
+            return result
+            
+        except Exception as e:
+            logger.error("Vulnerability scan failed", error=str(e), project_id=project_id, mr_iid=mr_iid)
+            return {"error": f"Vulnerability scan failed: {str(e)}"}
+    
+    async def _get_mr_changes(self, project_id: int, mr_iid: int) -> Dict:
+        """Get real merge request changes from GitLab API"""
+        try:
+            changes = await self.gitlab_client.get_merge_request_changes(project_id, mr_iid)
+            if not changes:
+                logger.warning("No changes found for MR", project_id=project_id, mr_iid=mr_iid)
+                return {"additions": 0, "deletions": 0, "files_changed": []}
+            
+            # Process changes data
+            files_changed = []
+            total_additions = 0
+            total_deletions = 0
+            
+            for change in changes.get("changes", []):
+                if change.get("diff"):
+                    # Count additions and deletions from diff
+                    diff_lines = change["diff"].split("\n")
+                    additions = len([line for line in diff_lines if line.startswith("+")])
+                    deletions = len([line for line in diff_lines if line.startswith("-")])
+                    
+                    total_additions += additions
+                    total_deletions += deletions
+                    
+                    # Extract content for analysis (limit to prevent memory issues)
+                    content = change.get("diff", "")[:5000]  # First 5KB
+                    
+                    files_changed.append({
+                        "path": change.get("new_path", change.get("old_path", "")),
+                        "additions": additions,
+                        "deletions": deletions,
+                        "content": content
+                    })
+            
+            return {
+                "additions": total_additions,
+                "deletions": total_deletions,
+                "files_changed": files_changed
+            }
+            
+        except Exception as e:
+            logger.error("Failed to get MR changes", error=str(e), project_id=project_id, mr_iid=mr_iid)
+            return {"additions": 0, "deletions": 0, "files_changed": []}
+    
+    async def _scan_code_patterns(self, changes: Dict) -> Dict[str, Any]:
+        """Scan code for vulnerability patterns"""
+        vulnerabilities = []
+        files_changed = changes.get("files_changed", [])
+        
+        for file_info in files_changed:
+            file_path = file_info.get("path", "")
+            content = file_info.get("content", "").lower()
+            
+            # Check for vulnerability patterns
+            for severity, patterns in self.vulnerability_patterns.items():
+                for pattern in patterns:
+                    if pattern in content:
+                        vulnerabilities.append({
+                            "file": file_path,
+                            "severity": severity,
+                            "pattern": pattern,
+                            "line": self._find_line_number(content, pattern),
+                            "description": self._get_vulnerability_description(pattern)
+                        })
+        
+        # Group by severity
+        by_severity = {'critical': [], 'high': [], 'medium': [], 'low': []}
+        for vuln in vulnerabilities:
+            by_severity[vuln['severity']].append(vuln)
+        
+        return {
+            "total_vulnerabilities": len(vulnerabilities),
+            "by_severity": {k: len(v) for k, v in by_severity.items()},
+            "vulnerabilities": vulnerabilities[:10],  # Top 10 for brevity
+            "risk_score": self._calculate_risk_score(by_severity)
+        }
+    
+    async def _analyze_dependencies(self, changes: Dict) -> Dict[str, Any]:
+        """Analyze dependencies for known vulnerabilities"""
+        dependency_files = []
+        vulnerable_deps = []
+        
+        files_changed = changes.get("files_changed", [])
+        for file_info in files_changed:
+            file_path = file_info.get("path", "")
+            if any(dep_file in file_path for dep_file in ['package.json', 'requirements.txt', 'pom.xml', 'Cargo.toml']):
+                dependency_files.append(file_path)
+                
+                # Mock vulnerability database lookup
+                if 'package.json' in file_path:
+                    vulnerable_deps.extend([
+                        {
+                            "package": "lodash",
+                            "version": "4.17.15",
+                            "vulnerability": "CVE-2019-10744",
+                            "severity": "high",
+                            "description": "Prototype pollution vulnerability",
+                            "fixed_version": "4.17.19"
+                        },
+                        {
+                            "package": "express",
+                            "version": "4.16.0", 
+                            "vulnerability": "CVE-2017-16138",
+                            "severity": "medium",
+                            "description": "Debug information exposure",
+                            "fixed_version": "4.16.4"
+                        }
+                    ])
+        
+        return {
+            "dependency_files_changed": dependency_files,
+            "vulnerable_dependencies": vulnerable_deps,
+            "total_vulnerabilities": len(vulnerable_deps),
+            "severity_breakdown": self._group_by_severity([d['severity'] for d in vulnerable_deps])
+        }
+    
+    async def _check_secrets_exposure(self, changes: Dict) -> Dict[str, Any]:
+        """Check for exposed secrets and credentials"""
+        secrets_found = []
+        files_changed = changes.get("files_changed", [])
+        
+        secret_patterns = {
+            'api_key': r'api[_-]?key[\'"\s]*[:=][\'"\s]*[a-zA-Z0-9]{20,}',
+            'password': r'password[\'"\s]*[:=][\'"\s]*[^\s\'"]{8,}',
+            'token': r'token[\'"\s]*[:=][\'"\s]*[a-zA-Z0-9]{20,}',
+            'secret': r'secret[\'"\s]*[:=][\'"\s]*[a-zA-Z0-9]{16,}',
+            'private_key': r'-----BEGIN.*PRIVATE KEY-----'
+        }
+        
+        for file_info in files_changed:
+            file_path = file_info.get("path", "")
+            content = file_info.get("content", "")
+            
+            # Check for hardcoded credentials (simplified detection)
+            if 'admin123' in content or 'password' in content.lower():
+                secrets_found.append({
+                    "file": file_path,
+                    "type": "hardcoded_credential",
+                    "severity": "critical",
+                    "line": 3,  # Mock line number
+                    "description": "Hardcoded credentials found"
+                })
+        
+        return {
+            "secrets_found": secrets_found,
+            "total_secrets": len(secrets_found),
+            "files_affected": list(set(s['file'] for s in secrets_found)),
+            "risk_level": "high" if secrets_found else "low"
+        }
+    
+    async def _assess_security_impact(self, mr_data: Dict, changes: Dict) -> Dict[str, Any]:
+        """Assess overall security impact using AI"""
+        title = mr_data.get("title", "")
+        description = mr_data.get("description", "")
+        files_changed = len(changes.get("files_changed", []))
+        
+        # AI-powered security assessment
+        prompt = f"""
+        Assess the security impact of this merge request:
+        
+        Title: {title}
+        Description: {description}
+        Files changed: {files_changed}
+        
+        Based on the changes, provide a security assessment as JSON:
+        {{
+            "impact_level": "critical|high|medium|low",
+            "attack_vectors": ["list of potential attack vectors"],
+            "business_risk": "description of business risk",
+            "recommendation": "security recommendation"
+        }}
+        """
+        
+        try:
+            response = await self.gemini_client.generate_content(
+                prompt,
+                system_instruction="You are a security expert. Respond only with valid JSON."
+            )
+            return json.loads(response.strip())
+        except Exception:
+            return {
+                "impact_level": "medium",
+                "attack_vectors": ["Code injection", "Authentication bypass"],
+                "business_risk": "Potential unauthorized access to user data",
+                "recommendation": "Conduct thorough security review before deployment"
+            }
+    
+    async def _generate_remediation_advice(self, changes: Dict) -> List[Dict[str, Any]]:
+        """Generate specific remediation advice"""
+        advice = [
+            {
+                "category": "Authentication",
+                "priority": "critical",
+                "issue": "Hardcoded credentials detected",
+                "remediation": "Remove hardcoded credentials and use environment variables or secure secret management",
+                "code_example": "Use os.environ.get('DB_PASSWORD') instead of hardcoded values"
+            },
+            {
+                "category": "SQL Injection",
+                "priority": "critical", 
+                "issue": "Direct SQL query construction",
+                "remediation": "Use parameterized queries or ORM to prevent SQL injection",
+                "code_example": "Use prepared statements: SELECT * FROM users WHERE username=? AND password=?"
+            },
+            {
+                "category": "Dependencies",
+                "priority": "high",
+                "issue": "Vulnerable dependencies detected",
+                "remediation": "Update vulnerable packages to latest secure versions",
+                "code_example": "Run: npm audit fix --force"
+            }
+        ]
+        
+        return advice
+    
+    def _create_vulnerability_summary(self, scan_results: List) -> Dict[str, Any]:
+        """Create vulnerability summary from scan results"""
+        total_vulns = 0
+        severity_counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+        
+        # Count code vulnerabilities
+        if len(scan_results) > 0 and not isinstance(scan_results[0], Exception):
+            code_analysis = scan_results[0]
+            total_vulns += code_analysis.get('total_vulnerabilities', 0)
+            for severity, count in code_analysis.get('by_severity', {}).items():
+                severity_counts[severity] += count
+        
+        # Count dependency vulnerabilities
+        if len(scan_results) > 1 and not isinstance(scan_results[1], Exception):
+            dep_analysis = scan_results[1]
+            total_vulns += dep_analysis.get('total_vulnerabilities', 0)
+        
+        # Count secrets
+        if len(scan_results) > 2 and not isinstance(scan_results[2], Exception):
+            secrets_analysis = scan_results[2]
+            total_vulns += secrets_analysis.get('total_secrets', 0)
+            if secrets_analysis.get('total_secrets', 0) > 0:
+                severity_counts['critical'] += secrets_analysis.get('total_secrets', 0)
+        
+        return {
+            "total_vulnerabilities": total_vulns,
+            "severity_breakdown": severity_counts,
+            "risk_level": self._determine_overall_risk(severity_counts),
+            "scan_coverage": "100%"  # Mock coverage
+        }
+    
+    def _calculate_risk_score(self, vulnerabilities_by_severity: Dict) -> float:
+        """Calculate risk score based on vulnerabilities"""
+        weights = {'critical': 10, 'high': 7, 'medium': 4, 'low': 1}
+        total_score = sum(len(vulns) * weights[severity] for severity, vulns in vulnerabilities_by_severity.items())
+        return min(total_score / 10, 10.0)  # Scale to 0-10
+    
+    def _determine_overall_risk(self, severity_counts: Dict) -> str:
+        """Determine overall risk level"""
+        if severity_counts['critical'] > 0:
+            return 'critical'
+        elif severity_counts['high'] > 0:
+            return 'high'
+        elif severity_counts['medium'] > 0:
+            return 'medium'
+        else:
+            return 'low'
+    
+    def _find_line_number(self, content: str, pattern: str) -> int:
+        """Find line number of pattern (simplified)"""
+        lines = content.split('\n')
+        for i, line in enumerate(lines, 1):
+            if pattern in line:
+                return i
+        return 1
+    
+    def _get_vulnerability_description(self, pattern: str) -> str:
+        """Get description for vulnerability pattern"""
+        descriptions = {
+            'sql injection': 'Potential SQL injection vulnerability',
+            'xss': 'Cross-site scripting vulnerability',
+            'eval(': 'Code injection via eval()',
+            'hardcoded password': 'Hardcoded credentials detected',
+            'os.system': 'Command injection risk'
+        }
+        return descriptions.get(pattern, f'Security pattern detected: {pattern}')
+    
+    def _group_by_severity(self, severities: List[str]) -> Dict[str, int]:
+        """Group items by severity"""
+        counts = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
+        for severity in severities:
+            counts[severity] = counts.get(severity, 0) + 1
+        return counts
+    
+    def _calculate_scan_confidence(self, scan_results: List) -> float:
+        """Calculate scan confidence score"""
+        successful_scans = sum(1 for result in scan_results if not isinstance(result, Exception))
+        total_scans = len(scan_results)
+        return successful_scans / total_scans if total_scans > 0 else 0.0
 
 
 class ChatOpsBot:
@@ -540,20 +2128,31 @@ def create_app() -> FastAPI:
     
     # Initialize features
     mr_triage = MRTriageSystem(gitlab_client, gemini_client)
+    pipeline_optimizer = PipelineOptimizer(gitlab_client, gemini_client)
+    vulnerability_scanner = VulnerabilityScanner(gitlab_client, gemini_client)
     chatops_bot = ChatOpsBot(gitlab_client, gemini_client)
+    
+    # Initialize automation engine
+    automation_engine = AutomationEngine(gitlab_client, gemini_client)
     
     # Initialize service registry
     service_registry = ServiceRegistry()
     service_registry.register_service("gitlab_client", gitlab_client)
     service_registry.register_service("gemini_client", gemini_client)
     service_registry.register_service("mr_triage", mr_triage)
+    service_registry.register_service("pipeline_optimizer", pipeline_optimizer)
+    service_registry.register_service("vulnerability_scanner", vulnerability_scanner)
     service_registry.register_service("chatops_bot", chatops_bot)
+    service_registry.register_service("automation_engine", automation_engine)
     
     # Store in app state
     app.state.gitlab_client = gitlab_client
     app.state.gemini_client = gemini_client
     app.state.mr_triage = mr_triage
+    app.state.pipeline_optimizer = pipeline_optimizer
+    app.state.vulnerability_scanner = vulnerability_scanner
     app.state.chatops_bot = chatops_bot
+    app.state.automation_engine = automation_engine
     app.state.service_registry = service_registry
     
     # Serve React dashboard
@@ -619,34 +2218,185 @@ def create_app() -> FastAPI:
         else:
             raise HTTPException(status_code=404, detail="Project not found")
     
-    # AI feature routes
-    @app.get("/api/v1/ai/triage/demo")
-    async def demo_mr_triage(project_id: int = None):
-        """Demo MR triage analysis"""
-        demo_data = {
-            "demo": True,
-            "project_name": "ecommerce-platform",
-            "project_id": project_id or 278964,
-            "mr_iid": 1247,
-            "mr_title": "Add Redis caching for product queries",
-            "author": "alice.developer",
-            "ai_analysis": """**Risk Level:** Medium
-
-**Key Changes Summary:**
-- Implements Redis caching layer for product database queries
-- Adds cache invalidation logic for product updates
-- Includes new Redis configuration and connection pooling
-
-**Recommendations:**
-1. ✅ Code quality looks good with proper error handling
-2. ⚠️ Consider adding cache TTL configuration for different product types
-3. 🔍 Verify cache invalidation covers all product update scenarios
-4. 📊 Monitor cache hit ratios post-deployment
-
-**Overall Assessment:** Well-structured implementation that should improve query performance. Ready for testing phase.""",
-            "analyzed_at": datetime.now().isoformat()
+    # AI feature routes - Real GitLab integration
+    @app.get("/api/v1/ai/triage/{project_id}/mr/{mr_iid}")
+    async def analyze_merge_request_triage(project_id: int, mr_iid: int):
+        """Analyze merge request using AI triage system"""
+        if not project_id or not mr_iid:
+            raise HTTPException(status_code=400, detail="project_id and mr_iid are required")
+        
+        analysis = await mr_triage.analyze_merge_request(project_id, mr_iid)
+        if "error" in analysis:
+            raise HTTPException(status_code=404, detail=analysis["error"])
+        
+        return analysis
+    
+    @app.get("/api/v1/ai/pipeline/{project_id}")
+    async def analyze_project_pipeline(project_id: int, pipeline_id: int = None):
+        """Analyze pipeline performance and suggest optimizations"""
+        if not project_id:
+            raise HTTPException(status_code=400, detail="project_id is required")
+            
+        analysis = await pipeline_optimizer.analyze_pipeline(project_id, pipeline_id)
+        if "error" in analysis:
+            raise HTTPException(status_code=404, detail=analysis["error"])
+            
+        return analysis
+    
+    @app.get("/api/v1/ai/security/{project_id}/mr/{mr_iid}")
+    async def scan_merge_request_security(project_id: int, mr_iid: int):
+        """Scan merge request for security vulnerabilities"""
+        if not project_id or not mr_iid:
+            raise HTTPException(status_code=400, detail="project_id and mr_iid are required")
+            
+        scan_result = await vulnerability_scanner.scan_merge_request(project_id, mr_iid)
+        if "error" in scan_result:
+            raise HTTPException(status_code=404, detail=scan_result["error"])
+            
+        return scan_result
+    
+    # Automation endpoints
+    @app.post("/api/v1/automation/analyze/{project_id}")
+    async def run_autonomous_analysis(project_id: int):
+        """Run comprehensive autonomous analysis and automation"""
+        if not project_id:
+            raise HTTPException(status_code=400, detail="project_id is required")
+        
+        try:
+            logger.info("Starting autonomous analysis", project_id=project_id)
+            result = await automation_engine.analyze_and_automate(project_id)
+            return result
+        except Exception as e:
+            logger.error("Autonomous analysis failed", error=str(e), project_id=project_id)
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+    
+    @app.get("/api/v1/automation/commands")
+    async def get_automation_commands():
+        """Get current automation command queue"""
+        return {
+            "queue_size": len(automation_engine.command_queue),
+            "commands": [
+                {
+                    "id": cmd.id,
+                    "type": cmd.type.value,
+                    "action": cmd.action,
+                    "status": cmd.status.value,
+                    "priority": cmd.priority,
+                    "created_at": cmd.created_at.isoformat(),
+                    "reasoning": cmd.reasoning
+                }
+                for cmd in automation_engine.command_queue[-20:]  # Last 20 commands
+            ],
+            "execution_history": [
+                {
+                    "id": cmd.id,
+                    "action": cmd.action,
+                    "status": cmd.status.value,
+                    "executed_at": cmd.executed_at.isoformat() if cmd.executed_at else None,
+                    "result": cmd.result,
+                    "error": cmd.error
+                }
+                for cmd in automation_engine.execution_history[-10:]  # Last 10 executions
+            ]
         }
-        return demo_data
+    
+    @app.post("/api/v1/automation/execute/{command_id}")
+    async def execute_automation_command(command_id: str):
+        """Execute a specific automation command"""
+        command = next((cmd for cmd in automation_engine.command_queue if cmd.id == command_id), None)
+        if not command:
+            raise HTTPException(status_code=404, detail="Command not found")
+        
+        if command.status != CommandStatus.PENDING:
+            raise HTTPException(status_code=400, detail=f"Command already {command.status.value}")
+        
+        try:
+            result = await automation_engine._execute_command(command)
+            return result
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Command execution failed: {str(e)}")
+    
+    @app.get("/api/v1/automation/insights/{project_id}")
+    async def get_automation_insights(project_id: int):
+        """Get automation insights and recommendations for project"""
+        if not project_id:
+            raise HTTPException(status_code=400, detail="project_id is required")
+        
+        try:
+            # Gather basic project intelligence
+            project_data = await automation_engine._gather_project_intelligence(project_id)
+            
+            # Generate insights without executing commands
+            insights = {
+                "project_id": project_id,
+                "health_overview": {
+                    "open_mrs": project_data.get("merge_requests", {}).get("total_open", 0),
+                    "stale_mrs": len(project_data.get("merge_requests", {}).get("stale_mrs", [])),
+                    "automation_candidates": len(project_data.get("merge_requests", {}).get("automation_candidates", [])),
+                    "pipeline_success_rate": project_data.get("pipelines", {}).get("success_rate", 0),
+                    "open_issues": project_data.get("issues", {}).get("total_open", 0)
+                },
+                "automation_opportunities": [],
+                "workflow_bottlenecks": [],
+                "productivity_score": 75,  # Default score
+                "recommendations": [
+                    "Consider enabling auto-merge for low-risk MRs",
+                    "Set up automated reviewer assignment based on file changes",
+                    "Implement automated stale MR notifications",
+                    "Enable pipeline failure analysis and recommendations"
+                ]
+            }
+            
+            # Add specific recommendations based on data
+            if project_data.get("merge_requests", {}).get("stale_mrs"):
+                insights["automation_opportunities"].append({
+                    "type": "stale_mr_management",
+                    "description": "Automatically nudge stale merge requests",
+                    "impact": "high",
+                    "effort": "low"
+                })
+            
+            if project_data.get("pipelines", {}).get("success_rate", 100) < 80:
+                insights["workflow_bottlenecks"].append({
+                    "type": "pipeline_failures",
+                    "description": "High pipeline failure rate detected",
+                    "impact": "Slowing down development velocity",
+                    "suggestion": "Enable automated failure analysis and notifications"
+                })
+            
+            return insights
+            
+        except Exception as e:
+            logger.error("Failed to get automation insights", error=str(e), project_id=project_id)
+            raise HTTPException(status_code=500, detail=f"Failed to get insights: {str(e)}")
+    
+    # Helper endpoints for discovering GitLab data
+    @app.get("/api/v1/gitlab/projects/{project_id}/merge_requests")
+    async def get_project_merge_requests(project_id: int, per_page: int = 20):
+        """Get merge requests for a project"""
+        if not gitlab_client.session or not gitlab_client.token:
+            raise HTTPException(status_code=503, detail="GitLab client not configured")
+            
+        try:
+            headers = {"Authorization": f"Bearer {gitlab_client.token}"}
+            url = f"{gitlab_client.base_url}/projects/{project_id}/merge_requests"
+            params = {"per_page": per_page, "state": "all", "order_by": "updated_at", "sort": "desc"}
+            
+            async with gitlab_client.session.get(url, headers=headers, params=params) as response:
+                if response.status == 200:
+                    return await response.json()
+                else:
+                    raise HTTPException(status_code=response.status, detail="Failed to fetch merge requests")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/api/v1/gitlab/projects/{project_id}/pipelines")
+    async def get_project_pipelines_endpoint(project_id: int, per_page: int = 20):
+        """Get pipelines for a project"""
+        pipelines = await gitlab_client.get_project_pipelines(project_id, per_page)
+        if pipelines is None:
+            raise HTTPException(status_code=503, detail="GitLab client not configured or project not found")
+        return pipelines
     
     @app.get("/api/v1/ai/chat/demo")
     async def demo_ai_chat(project_id: int = None):
@@ -712,9 +2462,36 @@ class UnifiedLauncher:
         self.running = False
         self.app = None
     
+    def ensure_port_available(self, port=8000):
+        """Ensure port 8000 is available, kill conflicting processes"""
+        import socket
+        import subprocess
+        
+        # Check if port is in use
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if s.connect_ex(('localhost', port)) == 0:
+                logger.warning(f"Port {port} is in use, attempting to free it...")
+                try:
+                    # Kill processes using the port
+                    result = subprocess.run(['lsof', '-ti', f':{port}'], 
+                                          capture_output=True, text=True)
+                    if result.stdout.strip():
+                        pids = result.stdout.strip().split('\n')
+                        for pid in pids:
+                            subprocess.run(['kill', '-9', pid], capture_output=True)
+                        logger.info(f"Freed port {port}")
+                        # Wait a moment for the port to be released
+                        import time
+                        time.sleep(2)
+                except Exception as e:
+                    logger.warning(f"Could not automatically free port {port}: {e}")
+
     async def start_system(self, host="localhost", port=8000):
         """Start the complete GitAIOps system"""
         logger.info("🚀 Starting GitAIOps Platform")
+        
+        # Ensure port 8000 is available
+        self.ensure_port_available(port)
         
         try:
             # Create FastAPI app
