@@ -30,9 +30,12 @@ class Settings(BaseSettings):
     gcp_project_id: Optional[str] = Field(default=None, env="GCP_PROJECT_ID")
     gcp_location: str = Field(default="us-central1", env="GCP_LOCATION")
     
-    # GitLab
+    # GitLab - Hardcoded credentials
     gitlab_url: str = Field(default="https://gitlab.com", env="GITLAB_URL")
-    gitlab_token: Optional[str] = Field(default=None, env="GITLAB_TOKEN")
+    gitlab_api_url: str = Field(default="https://gitlab.com/api/v4", env="GITLAB_API_URL")
+    gitlab_token: Optional[str] = Field(default="glpat-aTrQQ4EqmxGpGh3Ddcgm", env="GITLAB_TOKEN")
+    gitlab_access_token: Optional[str] = Field(default="glpat-aTrQQ4EqmxGpGh3Ddcgm", env="GITLAB_ACCESS_TOKEN")
+    gitlab_project_id: Optional[int] = Field(default=278964, env="GITLAB_PROJECT_ID")
     gitlab_webhook_secret: Optional[str] = Field(default=None, env="GITLAB_WEBHOOK_SECRET")
     
     # Database
@@ -45,11 +48,34 @@ class Settings(BaseSettings):
     NEO4J_PASSWORD: str = Field(default="password", env="NEO4J_PASSWORD")
     NEO4J_DATABASE: str = Field(default="neo4j", env="NEO4J_DATABASE")
     
-    # AI/ML
+    # AI/ML - OpenRouter with Claude Sonnet 4 as main decision-making LLM
     vertex_ai_endpoint: Optional[str] = Field(default=None, env="VERTEX_AI_ENDPOINT")
     ai_model_cache_ttl: int = Field(default=3600, env="MODEL_CACHE_TTL")
-    openrouter_api_key: Optional[str] = Field(default=None, env="OPENROUTER_API_KEY")
-    openrouter_model: str = Field(default="anthropic/claude-opus-4", env="OPENROUTER_MODEL")
+    openrouter_api_key: Optional[str] = Field(default="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", env="OPENROUTER_API_KEY")
+    openrouter_model: str = Field(default="anthropic/claude-sonnet-4", env="OPENROUTER_MODEL")
+    
+    # Additional OpenRouter API keys for load balancing and redundancy
+    openrouter_api_keys: list = Field(default=[
+        "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",
+        "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",
+        "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",
+        "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"
+    ])
+    
+    # Feature flags
+    enable_mr_triage: bool = Field(default=True, env="ENABLE_MR_TRIAGE")
+    enable_expert_finder: bool = Field(default=True, env="ENABLE_EXPERT_FINDER")
+    enable_pipeline_optimizer: bool = Field(default=True, env="ENABLE_PIPELINE_OPTIMIZER")
+    enable_vulnerability_scanner: bool = Field(default=True, env="ENABLE_VULNERABILITY_SCANNER")
+    enable_chatops_bot: bool = Field(default=True, env="ENABLE_CHATOPS_BOT")
+    
+    # Service settings
+    neo4j_enabled: bool = Field(default=False, env="NEO4J_ENABLED")
+    ai_services_enabled: bool = Field(default=True, env="AI_SERVICES_ENABLED")
+    
+    # Performance settings
+    max_concurrent_analyses: int = Field(default=5, env="MAX_CONCURRENT_ANALYSES")
+    cache_ttl_seconds: int = Field(default=3600, env="CACHE_TTL_SECONDS")
     
     # Security
     secret_key: str = Field(default="dev-secret-key", env="SECRET_KEY")

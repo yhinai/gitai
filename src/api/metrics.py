@@ -16,6 +16,7 @@ from src.features.realtime_metrics import (
     AlertSeverity,
     TrendAnalysis
 )
+from src.core.events import get_event_queue
 
 logger = structlog.get_logger(__name__)
 
@@ -62,6 +63,19 @@ class SystemStatsResponse(BaseModel):
     collection_interval_seconds: int
     latest_collection: Optional[str]
     buffer_sizes: Dict[str, int]
+
+class EventProcessingStatsResponse(BaseModel):
+    """Event processing statistics response"""
+    running: bool
+    worker_count: int
+    total_queue_size: int
+    queue_sizes: Dict[str, int]
+    total_processed: int
+    total_failed: int
+    events_by_type: Dict[str, int]
+    avg_processing_time: float
+    processor_stats: Dict[str, Dict[str, int]]
+    recent_events: List[Dict[str, Any]]
 
 # Routes
 @router.get("/summary", response_model=MetricsSummaryResponse)
@@ -381,6 +395,41 @@ async def stop_monitoring():
         raise HTTPException(
             status_code=500,
             detail=f"Failed to stop monitoring: {str(e)}"
+        )
+
+@router.get("/events", response_model=EventProcessingStatsResponse)
+async def get_event_processing_stats():
+    """
+    Get event processing system statistics
+    
+    Returns detailed information about the event processing system,
+    including worker status, queue sizes, processing statistics,
+    and recent events.
+    """
+    
+    try:
+        event_queue = get_event_queue()
+        stats = event_queue.get_stats()
+        recent_events = event_queue.get_recent_events(limit=10)
+        
+        return EventProcessingStatsResponse(
+            running=stats["running"],
+            worker_count=stats["worker_count"],
+            total_queue_size=stats["total_queue_size"],
+            queue_sizes=stats["queue_sizes"],
+            total_processed=stats["stats"]["total_processed"],
+            total_failed=stats["stats"]["total_failed"],
+            events_by_type=stats["stats"]["events_by_type"],
+            avg_processing_time=stats["stats"]["avg_processing_time"],
+            processor_stats=stats["processor_stats"],
+            recent_events=recent_events
+        )
+        
+    except Exception as e:
+        logger.error("Event processing stats retrieval failed", error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get event processing stats: {str(e)}"
         )
 
 # Helper Functions

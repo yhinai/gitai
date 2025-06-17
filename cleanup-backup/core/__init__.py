@@ -1,1 +1,0 @@
-# GitAIOps core package

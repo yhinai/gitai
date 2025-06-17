@@ -16,11 +16,27 @@ logger = get_logger(__name__)
 @router.get("/", response_model=Dict[str, Any])
 async def health_check() -> Dict[str, Any]:
     """Basic health check endpoint"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "service": "gitaiops-platform"
-    }
+    try:
+        from src.core.service_registry import get_service_registry
+        registry = get_service_registry()
+        system_health = await registry.get_system_health()
+        
+        return {
+            "status": system_health["overall_status"],
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "gitaiops-platform",
+            "services": system_health["services"],
+            "healthy_services": system_health["healthy_services"],
+            "total_services": system_health["total_services"]
+        }
+    except Exception as e:
+        logger.error("Health check failed", error=str(e))
+        return {
+            "status": "unhealthy",
+            "timestamp": datetime.utcnow().isoformat(),
+            "service": "gitaiops-platform",
+            "error": str(e)
+        }
 
 
 @router.get("/live", response_model=Dict[str, Any])

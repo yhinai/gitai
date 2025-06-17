@@ -15,35 +15,79 @@ from src.core.config import get_settings
 logger = structlog.get_logger(__name__)
 
 class OpenRouterClient:
-    """Client for OpenRouter AI API using OpenAI SDK"""
+    """Enhanced OpenRouter AI client with multiple API keys and Claude Sonnet 4"""
     
     def __init__(self):
         self.settings = get_settings()
-        self.client = None
+        self.clients = []
+        self.current_client_index = 0
         self.model = self.settings.openrouter_model
         self.cache = TTLCache(maxsize=1000, ttl=1800)  # 30 min cache
-        self._init_client()
+        self.failed_keys = set()  # Track failed API keys
+        self._init_clients()
     
-    def _init_client(self):
-        """Initialize OpenAI client for OpenRouter"""
-        if not self.settings.openrouter_api_key:
-            logger.warning("OpenRouter API key not configured, AI features will use fallback responses")
+    def _init_clients(self):
+        """Initialize multiple OpenAI clients for load balancing"""
+        api_keys = getattr(self.settings, 'openrouter_api_keys', [])
+        
+        # Fallback to single key if list not available
+        if not api_keys and self.settings.openrouter_api_key:
+            api_keys = [self.settings.openrouter_api_key]
+        
+        if not api_keys:
+            logger.warning("No OpenRouter API keys configured, AI features will use fallback responses")
             return
         
-        try:
-            self.client = AsyncOpenAI(
-                api_key=self.settings.openrouter_api_key,
-                base_url="https://openrouter.ai/api/v1"
-            )
-            logger.info("OpenRouter client initialized", model=self.model)
-        except Exception as e:
-            logger.error("Failed to initialize OpenRouter client", error=str(e))
+        for i, api_key in enumerate(api_keys):
+            try:
+                client = AsyncOpenAI(
+                    api_key=api_key,
+                    base_url="https://openrouter.ai/api/v1"
+                )
+                self.clients.append({
+                    'client': client,
+                    'api_key': api_key,
+                    'index': i,
+                    'failures': 0,
+                    'last_success': datetime.now()
+                })
+                logger.info(f"OpenRouter client {i+1} initialized", model=self.model, key_suffix=api_key[-8:])
+            except Exception as e:
+                logger.error(f"Failed to initialize OpenRouter client {i+1}", error=str(e), key_suffix=api_key[-8:])
+        
+        if self.clients:
+            logger.info(f"OpenRouter initialized with {len(self.clients)} API keys", model=self.model)
+        else:
+            logger.error("No OpenRouter clients could be initialized")
+    
+    def _get_next_client(self):
+        """Get next available client using round-robin with failure tracking"""
+        if not self.clients:
+            return None
+        
+        # Filter out failed clients (more than 3 failures in last hour)
+        available_clients = [
+            client for client in self.clients 
+            if client['failures'] < 3 or 
+            (datetime.now() - client['last_success']).seconds > 3600
+        ]
+        
+        if not available_clients:
+            # Reset failure counts if all clients are marked as failed
+            for client in self.clients:
+                client['failures'] = 0
+            available_clients = self.clients
+        
+        # Round-robin selection
+        client = available_clients[self.current_client_index % len(available_clients)]
+        self.current_client_index = (self.current_client_index + 1) % len(available_clients)
+        
+        return client
     
     async def is_available(self) -> bool:
         """Check if OpenRouter is available"""
-        return self.client is not None and self.settings.openrouter_api_key is not None
+        return len(self.clients) > 0
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     async def chat_completion(
         self,
         messages: List[Dict[str, str]],
@@ -51,7 +95,7 @@ class OpenRouterClient:
         max_tokens: int = 4000,
         use_cache: bool = True
     ) -> Optional[str]:
-        """Get chat completion from OpenRouter"""
+        """Get chat completion from OpenRouter with automatic failover"""
         
         if not await self.is_available():
             logger.warning("OpenRouter not available, returning None")
@@ -65,53 +109,80 @@ class OpenRouterClient:
                 logger.debug("Cache hit for OpenRouter request")
                 return self.cache[cache_key]
         
-        try:
-            logger.info(
-                "Making OpenRouter API request",
-                model=self.model,
-                messages_count=len(messages),
-                temperature=temperature,
-                max_tokens=max_tokens
-            )
-            
-            response = await self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                extra_headers={
-                    "HTTP-Referer": "https://gitaiops.com",
-                    "X-Title": "GitAIOps Platform"
-                }
-            )
-            
-            if response.choices and len(response.choices) > 0:
-                content = response.choices[0].message.content
+        # Try each available client
+        last_error = None
+        for attempt in range(len(self.clients)):
+            client_info = self._get_next_client()
+            if not client_info:
+                break
                 
-                # Cache the response
-                if use_cache and cache_key:
-                    self.cache[cache_key] = content
-                
+            try:
                 logger.info(
-                    "OpenRouter API request successful",
+                    "Making OpenRouter API request",
                     model=self.model,
-                    response_length=len(content) if content else 0,
-                    usage=response.usage.total_tokens if response.usage else None
+                    client_index=client_info['index'],
+                    messages_count=len(messages),
+                    temperature=temperature,
+                    max_tokens=max_tokens
                 )
                 
-                return content
-            else:
-                logger.warning("No response content from OpenRouter")
-                return None
+                response = await client_info['client'].chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    extra_headers={
+                        "HTTP-Referer": "https://gitaiops.com",
+                        "X-Title": "GitAIOps Platform - Claude Sonnet 4"
+                    }
+                )
                 
-        except Exception as e:
-            logger.error(
-                "OpenRouter API request failed",
-                model=self.model,
-                error=str(e),
-                exc_info=True
-            )
-            raise
+                if response.choices and len(response.choices) > 0:
+                    content = response.choices[0].message.content
+                    
+                    # Mark success
+                    client_info['last_success'] = datetime.now()
+                    client_info['failures'] = max(0, client_info['failures'] - 1)
+                    
+                    # Cache the response
+                    if use_cache and cache_key:
+                        self.cache[cache_key] = content
+                    
+                    logger.info(
+                        "OpenRouter API request successful",
+                        model=self.model,
+                        client_index=client_info['index'],
+                        response_length=len(content) if content else 0,
+                        usage=response.usage.total_tokens if response.usage else None
+                    )
+                    
+                    return content
+                else:
+                    logger.warning("No response content from OpenRouter", client_index=client_info['index'])
+                    client_info['failures'] += 1
+                    continue
+                    
+            except Exception as e:
+                client_info['failures'] += 1
+                last_error = e
+                logger.warning(
+                    "OpenRouter API request failed, trying next client",
+                    model=self.model,
+                    client_index=client_info['index'],
+                    error=str(e),
+                    attempt=attempt + 1,
+                    total_clients=len(self.clients)
+                )
+                continue
+        
+        # All clients failed
+        logger.error(
+            "All OpenRouter clients failed",
+            model=self.model,
+            total_attempts=len(self.clients),
+            last_error=str(last_error) if last_error else "Unknown"
+        )
+        return None
     
     def _create_cache_key(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int) -> str:
         """Create cache key for request"""
