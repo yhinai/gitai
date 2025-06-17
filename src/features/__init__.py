@@ -1,1 +1,0 @@
-# GitAIOps features package

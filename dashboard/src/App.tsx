@@ -275,7 +275,7 @@ function App() {
               <div className="flex items-center gap-4 text-dark-secondary">
                 <span className="mono font-medium">GitAIOps v1.0.0</span>
                 <span>•</span>
-                <span>Claude Sonnet 4</span>
+                <span>Gemini 2.0 Flash</span>
               </div>
               <div className="flex items-center gap-2">
                 <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />

@@ -1,1 +1,0 @@
-# GitAIOps utilities package

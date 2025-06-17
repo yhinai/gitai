@@ -51,7 +51,7 @@ export const ActivityFeed: React.FC<ActivityFeedProps> = ({ activities, isLoadin
           { title: 'Settings Updated', description: 'Notification preferences modified' },
         ],
         health_check: [
-          { title: 'OpenRouter Status', description: 'Claude Sonnet 4 API responding with 98ms latency' },
+          { title: 'Gemini AI Status', description: 'Gemini 2.0 Flash API responding with 120ms latency' },
           { title: 'GitLab Connection', description: 'GitLab API connection stable and authenticated' },
           { title: 'Neo4j Database', description: 'Graph database connection established' },
           { title: 'Event Processing', description: '5 workers processing events at 12.3 events/sec' },

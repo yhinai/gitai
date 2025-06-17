@@ -116,12 +116,12 @@ export const SystemOverview: React.FC<SystemOverviewProps> = ({
             <div className="flex items-center gap-3 mb-2">
               <Brain className="w-6 h-6 text-primary-600" />
               <div>
-                <h3 className="font-medium text-gray-900">Claude Sonnet 4</h3>
-                <p className="text-sm text-gray-600">4 API Keys Active</p>
+                <h3 className="font-medium text-gray-900">Gemini 2.0 Flash</h3>
+                <p className="text-sm text-gray-600">1 API Key Active</p>
               </div>
             </div>
             <div className={`w-2 h-2 rounded-full ${
-              getServiceStatus('openrouter_client') === 'healthy' ? 'bg-success-500' : 'bg-error-500'
+              getServiceStatus('gemini_client') === 'healthy' ? 'bg-success-500' : 'bg-error-500'
             } animate-pulse`} />
           </motion.div>
 
