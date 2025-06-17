@@ -32,19 +32,19 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   return (
     <div className="space-y-4">
       {/* Current Project Display */}
-      <div className="glass-dark rounded-xl p-4 border border-white/5">
+      <div className="glass-light rounded-xl p-4 border border-gray-200 shadow-sm">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500/20 to-purple-500/20 rounded-lg flex items-center justify-center border border-blue-500/20">
-              <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="w-10 h-10 bg-gradient-to-br from-blue-50 to-purple-50 rounded-lg flex items-center justify-center border border-blue-200">
+              <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 9a2 2 0 00-2 2v2a2 2 0 002 2m0 0h14m-14 0a2 2 0 002 2v2a2 2 0 01-2 2M5 9V7a2 2 0 012-2h12a2 2 0 012 2v2M7 13h10v-2H7v2z" />
               </svg>
             </div>
             <div>
-              <div className="text-dark-primary font-semibold mono">
+              <div className="text-light-primary font-semibold mono">
                 Project #{currentProjectId}
               </div>
-              <div className="text-dark-secondary text-sm">
+              <div className="text-light-secondary text-sm">
                 {projectName || 'Loading project details...'}
               </div>
             </div>
@@ -52,7 +52,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
           
           <button
             onClick={() => setIsEditing(true)}
-            className="btn-dark px-4 py-2 rounded-lg text-sm font-medium focus-dark"
+            className="btn-light px-4 py-2 rounded-lg text-sm font-medium focus-light"
           >
             Change
           </button>
@@ -65,18 +65,18 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
           exit={{ opacity: 0, height: 0 }}
-          className="glass-dark rounded-xl p-4 border border-purple-500/20"
+          className="glass-light rounded-xl p-4 border border-purple-200 shadow-sm"
         >
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-dark-secondary mb-2">
+              <label className="block text-sm font-medium text-light-secondary mb-2">
                 Enter New Project ID
               </label>
               <input
                 type="number"
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
-                className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-lg text-dark-primary placeholder-dark-muted focus-dark transition-all mono font-medium"
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-light-primary placeholder-gray-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all mono font-medium"
                 placeholder="Enter project ID..."
                 autoFocus
                 min="1"
@@ -94,7 +94,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
               <button
                 type="button"
                 onClick={handleCancel}
-                className="btn-dark px-4 py-3 rounded-lg transition-all duration-200 font-medium focus-dark"
+                className="btn-light px-4 py-3 rounded-lg transition-all duration-200 font-medium focus-light"
               >
                 Cancel
               </button>
@@ -110,10 +110,10 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             setInputValue('278964');
             onProjectChange(278964);
           }}
-          className="p-4 glass-dark rounded-lg card-hover-dark transition-all duration-200 text-left border border-white/5 focus-dark"
+          className="p-4 glass-light rounded-lg card-hover-light transition-all duration-200 text-left border border-gray-200 shadow-sm focus-light"
         >
-          <div className="text-dark-secondary text-sm font-semibold">GitLab Demo</div>
-          <div className="text-dark-muted text-xs mono">#278964</div>
+          <div className="text-light-secondary text-sm font-semibold">GitLab Demo</div>
+          <div className="text-light-muted text-xs mono">#278964</div>
         </button>
         
         <button
@@ -121,10 +121,10 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             setInputValue(currentProjectId.toString());
             onProjectChange(currentProjectId);
           }}
-          className="p-4 glass-dark rounded-lg card-hover-dark transition-all duration-200 text-left border border-white/5 focus-dark"
+          className="p-4 glass-light rounded-lg card-hover-light transition-all duration-200 text-left border border-gray-200 shadow-sm focus-light"
         >
-          <div className="text-dark-secondary text-sm font-semibold">Refresh</div>
-          <div className="text-dark-muted text-xs">Reload current</div>
+          <div className="text-light-secondary text-sm font-semibold">Refresh</div>
+          <div className="text-light-muted text-xs">Reload current</div>
         </button>
       </div>
     </div>

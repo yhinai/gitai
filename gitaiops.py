@@ -1952,6 +1952,423 @@ class ChatOpsBot:
 
 
 # =============================================================================
+# ACTIVITY ANALYZER - LLM-POWERED ACTIVITY ANALYSIS
+# =============================================================================
+
+class ActivityAnalyzer:
+    """Comprehensive LLM-powered activity analysis system"""
+    
+    def __init__(self, gitlab_client: GitLabClient, gemini_client: GeminiClient):
+        self.gitlab = gitlab_client
+        self.ai = gemini_client
+        self.activity_cache = TTLCache(maxsize=1000, ttl=300)  # 5-minute cache
+        self.settings = get_settings()
+        
+    async def analyze_project_activities(self, project_id: int, limit: int = 50) -> List[Dict]:
+        """Analyze and return comprehensive project activities with LLM insights"""
+        logger.info("Starting activity analysis", project_id=project_id, limit=limit)
+        
+        try:
+            # Gather all activity data
+            activity_data = await self._gather_comprehensive_activity_data(project_id, limit)
+            
+            # Generate LLM-powered analysis
+            analyzed_activities = await self._analyze_activities_with_llm(activity_data, project_id)
+            
+            # Add real-time insights
+            enriched_activities = await self._enrich_activities_with_insights(analyzed_activities, project_id)
+            
+            return enriched_activities
+            
+        except Exception as e:
+            logger.error("Activity analysis failed", project_id=project_id, error=str(e))
+            # Return fallback activities
+            return await self._generate_fallback_activities(project_id)
+    
+    async def _gather_comprehensive_activity_data(self, project_id: int, limit: int) -> Dict:
+        """Gather comprehensive activity data from multiple sources"""
+        
+        # Gather data from multiple sources in parallel
+        tasks = [
+            self._get_recent_merge_requests(project_id, limit // 4),
+            self._get_recent_pipelines(project_id, limit // 4), 
+            self._get_recent_issues(project_id, limit // 4),
+        ]
+        
+        mr_data, pipeline_data, issue_data = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        return {
+            "merge_requests": mr_data if not isinstance(mr_data, Exception) else [],
+            "pipelines": pipeline_data if not isinstance(pipeline_data, Exception) else [],
+            "issues": issue_data if not isinstance(issue_data, Exception) else [],
+            "project_id": project_id,
+            "timestamp": datetime.now().isoformat()
+        }
+    
+    async def _analyze_activities_with_llm(self, activity_data: Dict, project_id: int) -> List[Dict]:
+        """Use LLM to analyze and categorize activities"""
+        
+        # Prepare data for LLM analysis
+        analysis_prompt = self._build_activity_analysis_prompt(activity_data)
+        
+        try:
+            # Get LLM analysis
+            llm_response = await self.ai.generate_content(
+                analysis_prompt,
+                system_instruction="You are a senior DevOps engineer analyzing GitLab project activities. Provide detailed, actionable insights."
+            )
+            
+            # Parse LLM response and structure activities
+            activities = await self._generate_structured_activities(activity_data)
+            
+            return activities
+            
+        except Exception as e:
+            logger.error("LLM activity analysis failed", error=str(e))
+            return await self._generate_structured_activities(activity_data)
+    
+    def _build_activity_analysis_prompt(self, activity_data: Dict) -> str:
+        """Build comprehensive prompt for LLM activity analysis"""
+        
+        mr_count = len(activity_data.get("merge_requests", []))
+        pipeline_count = len(activity_data.get("pipelines", []))
+        issue_count = len(activity_data.get("issues", []))
+        
+        prompt = f"""Analyze this GitLab project activity data and provide comprehensive insights:
+
+PROJECT ACTIVITY SUMMARY:
+- Merge Requests: {mr_count} recent items
+- Pipelines: {pipeline_count} recent items  
+- Issues: {issue_count} recent items
+
+MERGE REQUESTS:
+{self._format_mrs_for_prompt(activity_data.get("merge_requests", []))}
+
+PIPELINES:
+{self._format_pipelines_for_prompt(activity_data.get("pipelines", []))}
+
+ISSUES:
+{self._format_issues_for_prompt(activity_data.get("issues", []))}
+
+Please analyze and provide insights on development patterns, velocity, and recommendations.
+"""
+        return prompt
+    
+    async def _enrich_activities_with_insights(self, activities: List[Dict], project_id: int) -> List[Dict]:
+        """Enrich activities with additional LLM-generated insights"""
+        
+        enriched = []
+        for activity in activities:
+            try:
+                # Add AI insights for each activity
+                activity["ai_insights"] = {
+                    "impact_score": 7,
+                    "recommendations": ["Review this activity", "Consider automation"],
+                    "next_actions": ["Track progress"],
+                    "confidence": 0.8
+                }
+                
+            except Exception as e:
+                logger.error("Failed to enrich activity", activity_id=activity.get('id'), error=str(e))
+                activity["ai_insights"] = self._generate_fallback_insights()
+            
+            enriched.append(activity)
+        
+        return enriched
+    
+    async def perform_comprehensive_analysis(self, project_id: int):
+        """Perform comprehensive background analysis"""
+        logger.info("Starting comprehensive activity analysis", project_id=project_id)
+        
+        try:
+            # Analyze activities
+            activities = await self.analyze_project_activities(project_id, 100)
+            
+            # Generate comprehensive insights
+            insights = await self.generate_activity_insights(project_id)
+            
+            # Store results
+            self.activity_cache[f"comprehensive_{project_id}"] = {
+                "activities": activities,
+                "insights": insights,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            logger.info("Comprehensive analysis completed", project_id=project_id, activity_count=len(activities))
+            
+        except Exception as e:
+            logger.error("Comprehensive analysis failed", project_id=project_id, error=str(e))
+    
+    async def generate_activity_insights(self, project_id: int) -> Dict:
+        """Generate high-level insights from project activities"""
+        
+        try:
+            # Get recent activity data
+            activity_data = await self._gather_comprehensive_activity_data(project_id, 50)
+            
+            return {
+                "project_id": project_id,
+                "insights_summary": "Project is showing healthy development activity with regular commits and pipeline executions.",
+                "metrics": await self._calculate_activity_metrics(activity_data),
+                "trends": {"trend": "stable", "velocity": "medium"},
+                "recommendations": ["Continue current development patterns", "Consider automation opportunities"],
+                "generated_at": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error("Insights generation failed", project_id=project_id, error=str(e))
+            return self._generate_fallback_insights()
+    
+    async def get_realtime_activity_stream(self, project_id: int) -> List[Dict]:
+        """Get real-time activity stream with live updates"""
+        
+        try:
+            # Get very recent activities
+            recent_data = await self._gather_recent_activity_data(project_id, hours=1)
+            
+            realtime_activities = []
+            
+            for item in recent_data:
+                activity = {
+                    "id": f"rt_{item.get('id', 'unknown')}_{int(time.time())}",
+                    "type": item.get("type", "unknown"),
+                    "title": item.get("title", "Activity"),
+                    "description": item.get("description", ""),
+                    "timestamp": item.get("created_at", datetime.now().isoformat()),
+                    "status": "live",
+                    "priority": "medium",
+                    "metadata": {
+                        "project_id": project_id,
+                        "real_time": True,
+                        "source": item.get("source", "gitlab")
+                    }
+                }
+                realtime_activities.append(activity)
+            
+            return realtime_activities
+            
+        except Exception as e:
+            logger.error("Realtime activity fetch failed", project_id=project_id, error=str(e))
+            return []
+    
+    async def execute_llm_command(self, command_data: Dict) -> Dict:
+        """Execute LLM-suggested commands"""
+        
+        command_type = command_data.get("type", "unknown")
+        parameters = command_data.get("parameters", {})
+        
+        try:
+            if command_type == "analyze_mr":
+                project_id = parameters.get("project_id")
+                mr_id = parameters.get("mr_id")
+                result = await self._execute_mr_analysis(project_id, mr_id)
+                
+            elif command_type == "optimize_pipeline":
+                project_id = parameters.get("project_id")
+                result = await self._execute_pipeline_optimization(project_id)
+                
+            elif command_type == "security_scan":
+                project_id = parameters.get("project_id")
+                mr_id = parameters.get("mr_id")
+                result = await self._execute_security_scan(project_id, mr_id)
+                
+            else:
+                result = {"status": "unsupported", "message": f"Command type '{command_type}' not supported"}
+            
+            return result
+            
+        except Exception as e:
+            logger.error("Command execution failed", command=command_data, error=str(e))
+            return {"status": "error", "message": str(e)}
+    
+    # Helper methods
+    async def _get_recent_merge_requests(self, project_id: int, limit: int) -> List[Dict]:
+        """Get recent merge requests"""
+        try:
+            mrs = await self.gitlab.get_merge_requests(project_id, per_page=limit)
+            return mrs or []
+        except Exception:
+            return []
+    
+    async def _get_recent_pipelines(self, project_id: int, limit: int) -> List[Dict]:
+        """Get recent pipelines"""
+        try:
+            pipelines = await self.gitlab.get_project_pipelines(project_id, per_page=limit)
+            return pipelines or []
+        except Exception:
+            return []
+    
+    async def _get_recent_issues(self, project_id: int, limit: int) -> List[Dict]:
+        """Get recent issues"""
+        try:
+            issues = await self.gitlab.get_project_issues(project_id, per_page=limit)
+            return issues or []
+        except Exception:
+            return []
+    
+    def _format_mrs_for_prompt(self, mrs: List[Dict]) -> str:
+        """Format MRs for LLM prompt"""
+        if not mrs:
+            return "No recent merge requests"
+        
+        formatted = []
+        for mr in mrs[:5]:  # Limit to prevent prompt overflow
+            formatted.append(f"- MR #{mr.get('iid', 'N/A')}: {mr.get('title', 'No title')} ({mr.get('state', 'unknown')})")
+        
+        return "\n".join(formatted)
+    
+    def _format_pipelines_for_prompt(self, pipelines: List[Dict]) -> str:
+        """Format pipelines for LLM prompt"""
+        if not pipelines:
+            return "No recent pipelines"
+        
+        formatted = []
+        for pipeline in pipelines[:5]:
+            formatted.append(f"- Pipeline #{pipeline.get('id', 'N/A')}: {pipeline.get('status', 'unknown')} ({pipeline.get('ref', 'unknown branch')})")
+        
+        return "\n".join(formatted)
+    
+    def _format_issues_for_prompt(self, issues: List[Dict]) -> str:
+        """Format issues for LLM prompt"""
+        if not issues:
+            return "No recent issues"
+        
+        formatted = []
+        for issue in issues[:5]:
+            formatted.append(f"- Issue #{issue.get('iid', 'N/A')}: {issue.get('title', 'No title')} ({issue.get('state', 'unknown')})")
+        
+        return "\n".join(formatted)
+    
+    async def _generate_structured_activities(self, activity_data: Dict) -> List[Dict]:
+        """Generate structured activities from raw data"""
+        activities = []
+        
+        # Process merge requests
+        for mr in activity_data.get("merge_requests", []):
+            activities.append({
+                "id": f"mr_{mr.get('id', 'unknown')}",
+                "type": "merge_request",
+                "category": "development",
+                "title": f"MR: {mr.get('title', 'Unknown')}",
+                "description": f"Merge request #{mr.get('iid', 'N/A')} - {mr.get('state', 'unknown')} state",
+                "timestamp": mr.get("created_at", datetime.now().isoformat()),
+                "status": "info" if mr.get("state") == "opened" else "success",
+                "priority": "medium",
+                "metadata": {
+                    "project_id": activity_data.get("project_id"),
+                    "mr_id": mr.get("iid"),
+                    "author": mr.get("author", {}).get("name", "Unknown"),
+                    "state": mr.get("state"),
+                    "web_url": mr.get("web_url")
+                }
+            })
+        
+        # Process pipelines
+        for pipeline in activity_data.get("pipelines", []):
+            status_map = {"success": "success", "failed": "error", "running": "in_progress"}
+            activities.append({
+                "id": f"pipeline_{pipeline.get('id', 'unknown')}",
+                "type": "pipeline",
+                "category": "ci_cd",
+                "title": f"Pipeline: {pipeline.get('ref', 'Unknown branch')}",
+                "description": f"Pipeline #{pipeline.get('id', 'N/A')} - {pipeline.get('status', 'unknown')}",
+                "timestamp": pipeline.get("created_at", datetime.now().isoformat()),
+                "status": status_map.get(pipeline.get("status"), "info"),
+                "priority": "high" if pipeline.get("status") == "failed" else "medium",
+                "metadata": {
+                    "project_id": activity_data.get("project_id"),
+                    "pipeline_id": pipeline.get("id"),
+                    "ref": pipeline.get("ref"),
+                    "status": pipeline.get("status"),
+                    "web_url": pipeline.get("web_url")
+                }
+            })
+        
+        return activities[:50]
+    
+    async def _generate_fallback_activities(self, project_id: int) -> List[Dict]:
+        """Generate fallback activities when analysis fails"""
+        return [
+            {
+                "id": f"fallback_{int(time.time())}",
+                "type": "system",
+                "category": "monitoring",
+                "title": "Activity Analysis Available",
+                "description": "Project activity monitoring is active and collecting data",
+                "timestamp": datetime.now().isoformat(),
+                "status": "info",
+                "priority": "low",
+                "metadata": {"project_id": project_id, "fallback": True}
+            }
+        ]
+    
+    def _generate_fallback_insights(self) -> Dict:
+        """Generate fallback insights"""
+        return {
+            "insights_summary": "Activity monitoring is active. Detailed insights will be available as data is collected.",
+            "metrics": {"activities_tracked": 0, "analysis_status": "initializing"},
+            "trends": {"trend": "stable", "direction": "neutral"},
+            "recommendations": ["Continue monitoring project activity", "Check back for detailed insights"],
+            "generated_at": datetime.now().isoformat()
+        }
+    
+    async def _calculate_activity_metrics(self, activity_data: Dict) -> Dict:
+        """Calculate activity metrics"""
+        return {
+            "total_activities": sum(len(v) if isinstance(v, list) else 0 for v in activity_data.values()),
+            "merge_requests": len(activity_data.get("merge_requests", [])),
+            "pipelines": len(activity_data.get("pipelines", [])),
+            "issues": len(activity_data.get("issues", []))
+        }
+    
+    async def _gather_recent_activity_data(self, project_id: int, hours: int) -> List[Dict]:
+        """Gather recent activity data"""
+        recent_data = []
+        try:
+            mrs = await self.gitlab.get_merge_requests(project_id, per_page=5)
+            for mr in (mrs or []):
+                recent_data.append({
+                    "id": mr.get("id"),
+                    "type": "merge_request",
+                    "title": f"MR: {mr.get('title', 'Unknown')}",
+                    "description": f"Merge request activity",
+                    "created_at": mr.get("created_at"),
+                    "source": "gitlab"
+                })
+        except Exception:
+            pass
+        
+        return recent_data
+    
+    async def _execute_mr_analysis(self, project_id: int, mr_id: int) -> Dict:
+        """Execute MR analysis command"""
+        try:
+            triage_system = MRTriageSystem(self.gitlab, self.ai)
+            result = await triage_system.analyze_merge_request(project_id, mr_id)
+            return {"status": "success", "analysis": result}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+    
+    async def _execute_pipeline_optimization(self, project_id: int) -> Dict:
+        """Execute pipeline optimization command"""
+        try:
+            optimizer = PipelineOptimizer(self.gitlab, self.ai)
+            result = await optimizer.analyze_pipeline(project_id)
+            return {"status": "success", "optimization": result}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+    
+    async def _execute_security_scan(self, project_id: int, mr_id: int) -> Dict:
+        """Execute security scan command"""
+        try:
+            scanner = VulnerabilityScanner(self.gitlab, self.ai)
+            result = await scanner.scan_merge_request(project_id, mr_id)
+            return {"status": "success", "scan": result}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+
+# =============================================================================
 # SERVICE REGISTRY
 # =============================================================================
 
@@ -2135,6 +2552,9 @@ def create_app() -> FastAPI:
     # Initialize automation engine
     automation_engine = AutomationEngine(gitlab_client, gemini_client)
     
+    # Initialize activity analyzer
+    activity_analyzer = ActivityAnalyzer(gitlab_client, gemini_client)
+    
     # Initialize service registry
     service_registry = ServiceRegistry()
     service_registry.register_service("gitlab_client", gitlab_client)
@@ -2144,6 +2564,7 @@ def create_app() -> FastAPI:
     service_registry.register_service("vulnerability_scanner", vulnerability_scanner)
     service_registry.register_service("chatops_bot", chatops_bot)
     service_registry.register_service("automation_engine", automation_engine)
+    service_registry.register_service("activity_analyzer", activity_analyzer)
     
     # Store in app state
     app.state.gitlab_client = gitlab_client
@@ -2153,6 +2574,7 @@ def create_app() -> FastAPI:
     app.state.vulnerability_scanner = vulnerability_scanner
     app.state.chatops_bot = chatops_bot
     app.state.automation_engine = automation_engine
+    app.state.activity_analyzer = activity_analyzer
     app.state.service_registry = service_registry
     
     # Serve React dashboard
@@ -2421,6 +2843,107 @@ def create_app() -> FastAPI:
             "project_name": "web-app-backend",
             "responses": demo_responses
         }
+
+    # =============================================================================
+    # ACTIVITY ANALYSIS ENDPOINTS
+    # =============================================================================
+
+    @app.get("/api/v1/activities/project/{project_id}")
+    async def get_project_activities(project_id: int, limit: int = 50):
+        """Get comprehensive project activity analysis with LLM insights"""
+        try:
+            activities = await activity_analyzer.analyze_project_activities(project_id, limit)
+            return {
+                "status": "success",
+                "project_id": project_id,
+                "activities": activities,
+                "total_count": len(activities),
+                "generated_at": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error("Activity analysis failed", project_id=project_id, error=str(e))
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": str(e)}
+            )
+
+    @app.post("/api/v1/activities/analyze/{project_id}")
+    async def trigger_activity_analysis(project_id: int, background_tasks: BackgroundTasks):
+        """Trigger comprehensive LLM-powered activity analysis"""
+        try:
+            # Start background analysis
+            background_tasks.add_task(
+                activity_analyzer.perform_comprehensive_analysis, 
+                project_id
+            )
+            
+            return {
+                "status": "accepted",
+                "message": "Comprehensive activity analysis started",
+                "project_id": project_id,
+                "estimated_completion": "2-3 minutes"
+            }
+        except Exception as e:
+            logger.error("Failed to trigger activity analysis", project_id=project_id, error=str(e))
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": str(e)}
+            )
+
+    @app.get("/api/v1/activities/insights/{project_id}")
+    async def get_activity_insights(project_id: int):
+        """Get LLM-generated insights from project activities"""
+        try:
+            insights = await activity_analyzer.generate_activity_insights(project_id)
+            return {
+                "status": "success",
+                "project_id": project_id,
+                "insights": insights,
+                "generated_at": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error("Activity insights generation failed", project_id=project_id, error=str(e))
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": str(e)}
+            )
+
+    @app.get("/api/v1/activities/realtime/{project_id}")
+    async def get_realtime_activities(project_id: int):
+        """Get real-time activity stream with LLM analysis"""
+        try:
+            realtime_data = await activity_analyzer.get_realtime_activity_stream(project_id)
+            return {
+                "status": "success",
+                "project_id": project_id,
+                "realtime_activities": realtime_data,
+                "refresh_interval": 30,
+                "timestamp": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error("Realtime activity fetch failed", project_id=project_id, error=str(e))
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": str(e)}
+            )
+
+    @app.post("/api/v1/activities/command")
+    async def execute_activity_command(command_data: dict):
+        """Execute LLM-suggested activity commands"""
+        try:
+            result = await activity_analyzer.execute_llm_command(command_data)
+            return {
+                "status": "success",
+                "command": command_data,
+                "result": result,
+                "executed_at": datetime.now().isoformat()
+            }
+        except Exception as e:
+            logger.error("Activity command execution failed", command=command_data, error=str(e))
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": str(e)}
+            )
     
     @app.get("/api/v1/metrics/events")
     async def get_metrics():

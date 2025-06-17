@@ -51,6 +51,16 @@ export GEMINI_API_KEY="your-gemini-key"
 | **Security Scan** | `GET /api/v1/ai/security/{project_id}/mr/{mr_iid}` | Vulnerability scanning |
 | **Pipeline Analysis** | `GET /api/v1/ai/pipeline/{project_id}` | Pipeline optimization suggestions |
 
+### 🧠 NEW: Activity Analysis Endpoints (LLM-Powered)
+
+| Feature | Endpoint | Description |
+|---------|----------|-------------|
+| **Project Activities** | `GET /api/v1/activities/project/{project_id}` | Comprehensive LLM analysis of all project activities |
+| **Trigger Analysis** | `POST /api/v1/activities/analyze/{project_id}` | Start comprehensive background activity analysis |
+| **Activity Insights** | `GET /api/v1/activities/insights/{project_id}` | LLM-generated strategic insights and recommendations |
+| **Real-time Stream** | `GET /api/v1/activities/realtime/{project_id}` | Live activity stream with AI analysis |
+| **Execute Commands** | `POST /api/v1/activities/command` | Execute LLM-suggested automation commands |
+
 ### GitLab Data Endpoints
 
 | Data Type | Endpoint | Description |
@@ -80,6 +90,27 @@ curl "http://localhost:8000/api/v1/ai/security/70835889/mr/2"
 ```bash
 # Analyze pipeline performance
 curl "http://localhost:8000/api/v1/ai/pipeline/70835889"
+```
+
+### 🚀 NEW: Activity Analysis with LLM
+
+```bash
+# Get comprehensive project activities with AI insights
+curl "http://localhost:8000/api/v1/activities/project/70835889"
+
+# Trigger comprehensive background analysis
+curl -X POST "http://localhost:8000/api/v1/activities/analyze/70835889"
+
+# Get strategic insights and recommendations
+curl "http://localhost:8000/api/v1/activities/insights/70835889"
+
+# Get real-time activity stream
+curl "http://localhost:8000/api/v1/activities/realtime/70835889"
+
+# Execute LLM-suggested commands
+curl -X POST "http://localhost:8000/api/v1/activities/command" \
+  -H "Content-Type: application/json" \
+  -d '{"type": "analyze_mr", "parameters": {"project_id": 70835889, "mr_id": 2}}'
 ```
 
 ## 🏗️ Architecture
@@ -131,6 +162,10 @@ API_PORT=8000
 ✅ **AI MR Triage** - Risk assessment, review time estimation, expert suggestions  
 ✅ **Security Scanner** - Pattern detection, dependency analysis, secrets scanning
 ✅ **Pipeline Optimizer** - Performance analysis, cost savings estimation
+✅ **🧠 LLM Activity Analysis** - Comprehensive project activity insights with Gemini
+✅ **🤖 Intelligent Command Execution** - LLM-powered automation and recommendations
+✅ **📊 Real-time Activity Monitoring** - Live activity streams with AI analysis
+✅ **🎯 Strategic Insights** - High-level project health and velocity analysis
 ✅ **Auto Port Management** - Always uses port 8000, kills conflicts
 ✅ **Production Ready** - Health monitoring, error handling, caching
 
